@@ -68,6 +68,7 @@ static const uint32  wave_core_initial_mbssid_vap = 0;
 static const uint32  wave_core_initial_mbssid_num_vaps_in_group = 0;
 static const uint32  mtlk_core_initial_softblock_disable = 0; /* enable softblock by default */
 static const uint32  mtlk_core_initial_beacon_period = 100;
+static const char    wave_core_initial_csa_deauth_params[] = "";
 
 #define B_RATE 0x80
 #define MBIT_RATE_ENCODING_MUL 2
@@ -124,6 +125,16 @@ static const uint8 mtlk_core_initial_he_operation[HE_OPERATION_LEN] = {
                                                         HE_OPERATION_CAP2, HE_OPERATION_CAP3,
                                                         HE_OPERATION_CAP4, HE_OPERATION_CAP5,
                                                         HE_OPERATION_CAP6};
+static const uint8 mtlk_core_initial_he_non_advertised[HE_NON_ADVERTISED_LEN] = {
+                                                        HE_NON_ADVERT_CAP0,  HE_NON_ADVERT_CAP1,
+                                                        HE_NON_ADVERT_CAP2,  HE_NON_ADVERT_CAP3,
+                                                        HE_NON_ADVERT_CAP4,  HE_NON_ADVERT_CAP5,
+                                                        HE_NON_ADVERT_CAP6,  HE_NON_ADVERT_CAP7,
+                                                        HE_NON_ADVERT_CAP8,  HE_NON_ADVERT_CAP9,
+                                                        HE_NON_ADVERT_CAP10, HE_NON_ADVERT_CAP11,
+                                                        HE_NON_ADVERT_CAP12, HE_NON_ADVERT_CAP13,
+                                                        HE_NON_ADVERT_CAP14};
+static const struct mtlk_he_debug_mode_data mtlk_core_initial_he_debug_mode_data = { 0 };
 
 static const mtlk_pdb_initial_value mtlk_core_parameters[] =
 {
@@ -151,6 +162,8 @@ static const mtlk_pdb_initial_value mtlk_core_parameters[] =
   {PARAM_DB_CORE_VHT_MCS_NSS, PARAM_DB_TYPE_BINARY, PARAM_DB_VALUE_FLAG_NO_FLAG,  sizeof(mtlk_core_initial_vht_mcs_nss), &mtlk_core_initial_vht_mcs_nss},
   {PARAM_DB_CORE_HE_MCS_NSS, PARAM_DB_TYPE_BINARY, PARAM_DB_VALUE_FLAG_NO_FLAG, sizeof(mtlk_core_initial_he_mcs_nss), &mtlk_core_initial_he_mcs_nss},
   {PARAM_DB_CORE_HE_OPERATION, PARAM_DB_TYPE_BINARY, PARAM_DB_VALUE_FLAG_NO_FLAG, sizeof(mtlk_core_initial_he_operation), &mtlk_core_initial_he_operation},
+  {PARAM_DB_CORE_HE_NON_ADVERTISED, PARAM_DB_TYPE_BINARY, PARAM_DB_VALUE_FLAG_NO_FLAG, sizeof(mtlk_core_initial_he_non_advertised), &mtlk_core_initial_he_non_advertised},
+  {PARAM_DB_CORE_HE_DEBUG_DATA, PARAM_DB_TYPE_BINARY, PARAM_DB_VALUE_FLAG_NO_FLAG, sizeof(mtlk_core_initial_he_debug_mode_data), &mtlk_core_initial_he_debug_mode_data},
   {PARAM_DB_CORE_SET_BSS_FLAGS, PARAM_DB_TYPE_INT, PARAM_DB_VALUE_FLAG_NO_FLAG,  sizeof(mtlk_core_initial_set_bss_flags), &mtlk_core_initial_set_bss_flags},
   {PARAM_DB_CORE_WMM_PARAMS_BE, PARAM_DB_TYPE_BINARY, PARAM_DB_VALUE_FLAG_NO_FLAG, sizeof(mtlk_core_initial_wmm_params_be), &mtlk_core_initial_wmm_params_be},
   {PARAM_DB_CORE_WMM_PARAMS_BK, PARAM_DB_TYPE_BINARY, PARAM_DB_VALUE_FLAG_NO_FLAG, sizeof(mtlk_core_initial_wmm_params_bk), &mtlk_core_initial_wmm_params_bk},
@@ -173,6 +186,7 @@ static const mtlk_pdb_initial_value mtlk_core_parameters[] =
   {PARAM_DB_CORE_SOFTBLOCK_DISABLE,        PARAM_DB_TYPE_INT, PARAM_DB_VALUE_FLAG_NO_FLAG, sizeof(mtlk_core_initial_softblock_disable),        &mtlk_core_initial_softblock_disable},
   {PARAM_DB_CORE_MGMT_FRAMES_RATE,         PARAM_DB_TYPE_INT, PARAM_DB_VALUE_FLAG_NO_FLAG, sizeof(mtlk_core_initial_invalid_uint8),            &mtlk_core_initial_invalid_uint8},
   {PARAM_DB_CORE_BEACON_PERIOD,            PARAM_DB_TYPE_INT, PARAM_DB_VALUE_FLAG_NO_FLAG, sizeof(mtlk_core_initial_beacon_period),            &mtlk_core_initial_beacon_period},
+  {PARAM_DB_CORE_CSA_DEAUTH_PARAMS,     PARAM_DB_TYPE_BINARY, PARAM_DB_VALUE_FLAG_NO_FLAG, sizeof(struct intel_vendor_channel_switch_cfg),     wave_core_initial_csa_deauth_params},
 
   {PARAM_DB_CORE_LAST_VALUE_ID,       0,                    0,                            0,                               NULL},
 };

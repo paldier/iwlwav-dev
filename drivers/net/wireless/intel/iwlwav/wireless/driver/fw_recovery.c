@@ -592,6 +592,9 @@ static void _rcvry_card_delete (wave_rcvry_card_cfg_t *pcard)
   for (i = 0; i < MAX_NUM_OF_FW_CORES; i++)
     mtlk_osal_event_cleanup(&pcard->rcvry_ctx.mac_hang_evt[i]);
 
+  if (pcard->info != NULL)
+    mtlk_osal_mem_free(pcard->info);
+
   mtlk_osal_mem_free(pcard);
 }
 
@@ -684,6 +687,11 @@ int wave_rcvry_card_add (void *mmb_base, void *hw_ctx)
   }
 
   pcard->nof_files = mtlk_hw_get_fw_dump_info(hw_ctx, &pcard->info);
+  if (pcard->nof_files < 0) {
+    res = MTLK_ERR_UNKNOWN;
+    goto WAVE_RCVRY_CARD_ADD_ERR;
+  }
+
   ILOG0_D("Number of files to create %d", pcard->nof_files);
   info = pcard->info;
 
@@ -976,6 +984,7 @@ static inline void __rcvry_task_vap_info_prepare (wave_rcvry_radio_ctx_t *radio_
 {
   uint32 i, j;
   wave_rcvry_vap_info_t *vap_info_temp;
+  mtlk_vap_handle_t vap_handle;
 
   memset(radio_ctx->vap_info, 0, RCVRY_VAP_INFO_PTR_SIZE(radio_ctx->max_vaps_number));
   memset(radio_ctx->vap_info_array, 0, RCVRY_VAP_INFO_SIZE(radio_ctx->max_vaps_number));
@@ -983,10 +992,13 @@ static inline void __rcvry_task_vap_info_prepare (wave_rcvry_radio_ctx_t *radio_
   j = 0;
   vap_info_temp = radio_ctx->vap_info_array;
 
-  for (i = 0; i < radio_ctx->max_vaps_number; i++)
-  {
-    mtlk_vap_handle_t vap_handle;
+  if (MTLK_ERR_OK == mtlk_vap_manager_get_master_vap(radio_ctx->vap_manager, &vap_handle)) {
+    __rcvry_task_vap_info_save(vap_info_temp, vap_handle);
+    radio_ctx->vap_info[j++] = vap_info_temp++;
+  }
 
+  for (i = 0; i < radio_ctx->max_vaps_number - 1; i++)
+  {
     if (MTLK_ERR_OK != mtlk_vap_manager_get_vap_handle(radio_ctx->vap_manager, i, &vap_handle))
       continue;
 

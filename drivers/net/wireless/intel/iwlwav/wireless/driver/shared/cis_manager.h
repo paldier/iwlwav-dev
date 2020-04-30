@@ -54,11 +54,13 @@ typedef union
   uint8 d;
 } __MTLK_IDATA mtlk_cis_dev_opt_mask_t;
 
+#define MTLK_EEPROM_CIS_PRODUCTION       0x01
+
 /* CIS: card ID */
 typedef struct {
   uint8 type;
   uint8 revision;
-  uint8 country_code;   /* is not supported anymore */
+  uint8 production;     /* production if set to 1 else operation */
   mtlk_cis_dev_opt_mask_t dev_opt_mask;
   uint8 rf_chip_number;
   uint8 mac_address[ETH_ALEN];

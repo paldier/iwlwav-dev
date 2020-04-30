@@ -789,6 +789,12 @@ _mtlk_cis_search_and_parse_rssi_v6 (void *raw_cis, void *raw_cis_end, mtlk_eepro
     parsed_rssi = mtlk_cis_get_rssi_data(parsed_cis, band);
     if (parsed_rssi->cis_size) {
       WLOG_D("Duplicate RSSI CIS data for band %d -- skip", (int)band);
+    } else if ((band == MTLK_HW_BAND_5_2_GHZ) &&
+        (parsed_cis->card_id.type == HW_TYPE_WRX_600) &&
+        (parsed_cis->card_id.revision == HW_VERS_600_GPB_DFS_DB) &&
+        (parsed_cis->card_id.production != MTLK_EEPROM_CIS_PRODUCTION)) {
+        /* Workaround to skip RX CIS in 5G band for HW type 0x4A (ZWDFS)*/
+        ILOG0_D("skip RSSI CIS for band %d", band);
     } else {
       /* Store data */
       parsed_rssi->cis_size = (uint8)size;
@@ -853,8 +859,8 @@ mtlk_cis_data_parse (void *raw_cis,
   }
 
   /* check card_id values */
-  ILOG0_DDC("EEPROM Card ID: type 0x%02X, revision 0x%02X (%c)",
-            card_id->type, card_id->revision, card_id->revision);
+  ILOG0_DDCD("EEPROM Card ID: type 0x%02X, revision 0x%02X (%c) production 0x%02X",
+            card_id->type, card_id->revision, card_id->revision, card_id->production);
 
   /* Extend Card ID revision with printable chars from 0x40 ('@') to 0x7E ('~') */
   if ((card_id->revision < 0x40) || (card_id->revision > 0x7E))
@@ -924,6 +930,16 @@ mtlk_cis_data_parse (void *raw_cis,
     WLOG_V("EEPROM contain TPC data for both bands");
     /* res = MTLK_ERR_EEPROM; */
     /* goto END; */
+  }
+
+  /* Workaround to overwrite HW type 0x4A (ZWDFS) to 0x41 in opertion mode */
+  if ((parsed_cis->card_id.type == HW_TYPE_WRX_600) &&
+    (parsed_cis->card_id.revision == HW_VERS_600_GPB_DFS_DB) &&
+    (parsed_cis->card_id.production != MTLK_EEPROM_CIS_PRODUCTION))
+  {
+    ILOG0_DD("Overwrite HW rev from 0x%02X to 0x%02X",
+            parsed_cis->card_id.revision, HW_VERS_600_GPB614_2G);
+    parsed_cis->card_id.revision = HW_VERS_600_GPB614_2G;
   }
 
   SLOG1(1, 0, mtlk_eeprom_cis_data_t, parsed_cis);

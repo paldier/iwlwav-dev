@@ -84,6 +84,8 @@ static const mtlk_ability_id_t _radio_general_abilities[] = {
   WAVE_RADIO_REQ_CHANGE_BSS,
   WAVE_RADIO_REQ_SET_AP_BEACON_INFO,
   WAVE_RADIO_REQ_SET_CHAN,
+  WAVE_RADIO_REQ_NOTIFY_CAC_STARTED,
+  WAVE_RADIO_REQ_NOTIFY_CAC_FINISHED,
   WAVE_RADIO_REQ_DO_SCAN,
   WAVE_RADIO_REQ_SCAN_TIMEOUT,
   WAVE_RADIO_REQ_ALTER_SCAN,
@@ -99,6 +101,10 @@ static const mtlk_ability_id_t _radio_general_abilities[] = {
   WAVE_RADIO_REQ_GET_STATIONS_STATS,
   WAVE_RADIO_REQ_SET_NFRP_CFG,
   WAVE_RADIO_REQ_GET_CDB_CFG,
+  WAVE_RADIO_REQ_GET_RTS_THRESHOLD,
+  WAVE_RADIO_REQ_SET_RTS_THRESHOLD,
+  WAVE_RADIO_REQ_SET_AP_RETRY_LIMIT,
+  WAVE_RADIO_REQ_GET_AP_RETRY_LIMIT,
 };
 
 static const mtlk_ability_id_t _radio_ap_general_abilities[] = {
@@ -112,6 +118,7 @@ static const mtlk_ability_id_t _radio_ap_general_abilities[] = {
 static const mtlk_ability_id_t _radio_hw_data_abilities[] = {
   WAVE_RADIO_REQ_GET_HW_LIMITS,
   WAVE_RADIO_REQ_GET_PHY_RX_STATUS,
+  WAVE_RADIO_REQ_GET_PHY_CHAN_STATUS,
   WAVE_RADIO_REQ_GET_AGG_RATE_LIMIT,
   WAVE_RADIO_REQ_SET_AGG_RATE_LIMIT,
   WAVE_RADIO_REQ_GET_TX_POWER_LIMIT_OFFSET,

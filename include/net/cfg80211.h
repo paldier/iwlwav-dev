@@ -4419,6 +4419,7 @@ struct wiphy {
 	u32 max_sched_scan_plans;
 	u32 max_sched_scan_plan_interval;
 	u32 max_sched_scan_plan_iterations;
+	int out_of_scan_caching;
 
 	int n_cipher_suites;
 	const u32 *cipher_suites;

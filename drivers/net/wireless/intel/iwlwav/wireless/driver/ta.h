@@ -25,8 +25,7 @@
 /* TA criterion ID type */
 typedef enum _ta_crit_id_t {
   TA_CRIT_ID_COC,
-  TA_CRIT_ID_AOCS,
-  TA_CRIT_ID_DAGG,
+  TA_CRIT_ID_ERP,
   TA_CRIT_ID_LAST
 } ta_crit_id_t;
 
@@ -36,25 +35,30 @@ typedef enum _ta_crit_id_t {
 typedef void (*ta_crit_clb_t)(mtlk_handle_t clb_ctx, mtlk_handle_t result);
 
 /* AOCS configuration structure */
-typedef struct _ta_crit_aocs_cfg_t {
-  uint32 lower_threshold_initial;   /* Lower threshold initial value, in MSDUs */
-  uint32 threshold_window_size;     /* Threshold window size, in MSDUs */
-  uint32 threshold_window_time;     /* Time interval for MSDU counter normalization, in TA ticks */
-  uint32 msdu_per_window_threshold; /* Minimal acceptable MSDU count (normalized) */
-} ta_crit_aocs_cfg_t;
+typedef struct _ta_crit_erp_cfg_t {
+  uint32 interval;
+  uint32 coeff;
+} ta_crit_erp_cfg_t;
 
 /* COC configuration structure */
 typedef struct _ta_crit_coc_cfg_t {
   uint32 interval;
   uint32 coeff;
+  uint8  antennas; /* current antennas number */
 } ta_crit_coc_cfg_t;
+
+typedef struct _ta_crit_erp_result_t {
+  uint64 max_rx;
+  uint64 max_tx;
+  uint32 sta_num;
+} ta_crit_erp_result_t;
 
 /** Interface functions */
 
 mtlk_handle_t __MTLK_IFUNC mtlk_ta_create(mtlk_vap_manager_t *vap_manager);
 void    __MTLK_IFUNC mtlk_ta_delete(mtlk_handle_t ta_handle);
 
-void    __MTLK_IFUNC mtlk_ta_aocs_cfg(mtlk_handle_t ta_handle, ta_crit_aocs_cfg_t *cfg);
+int    __MTLK_IFUNC mtlk_ta_erp_cfg(mtlk_handle_t ta_handle, ta_crit_erp_cfg_t *cfg, BOOL restart_fn);
 int     __MTLK_IFUNC mtlk_ta_coc_cfg(mtlk_handle_t ta_handle, ta_crit_coc_cfg_t *coc_cfg);
 
 uint32  __MTLK_IFUNC mtlk_ta_get_timer_resolution_ms(mtlk_handle_t ta_handle);

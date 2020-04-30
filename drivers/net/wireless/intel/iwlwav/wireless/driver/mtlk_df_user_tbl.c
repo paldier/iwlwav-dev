@@ -222,6 +222,11 @@ struct iw_priv_args wave_linux_iw_core_radio_privtab[] = {
   SET_INTVEC  (PRM_ID_COC_AUTO_PARAMS                      , "sCoCAutoCfg"     )
   GET_INTVEC  (PRM_ID_COC_AUTO_PARAMS                      , "gCoCAutoCfg"     )
 
+  /* Effective radiated power */
+  SET_INTVEC  (PRM_ID_ERP                                  , "sErpSet"         )
+  GET_INTVEC  (PRM_ID_ERP                                  , "gErpSet"         )
+
+
 #ifdef CPTCFG_IWLWAV_PMCU_SUPPORT
   /* PCOC int ioctles */
   SET_INTVEC  (PRM_ID_PCOC_POWER_MODE                       , "sPCoCPower"     )
@@ -444,9 +449,6 @@ struct iw_priv_args wave_linux_iw_core_radio_privtab[] = {
   SET_INTVEC  (PRM_ID_FIXED_LTF_AND_GI                     , "sFixedLtfGi")
   GET_INTVEC  (PRM_ID_FIXED_LTF_AND_GI                     , "gFixedLtfGi")
 
-  /* Effective radiated power */
-  SET_INTVEC  (PRM_ID_ERP                                  , "sErpSet")
-
   /* Dynamic Multicast Rate */
   SET_INT     (PRM_ID_FAST_DYNAMIC_MC_RATE                 , "sDmrConfig")
   GET_INT     (PRM_ID_FAST_DYNAMIC_MC_RATE                 , "gDmrConfig")
@@ -469,6 +471,9 @@ struct iw_priv_args wave_linux_iw_core_radio_privtab[] = {
   /* Stations Statistics */
   SET_INT     (PRM_ID_STATIONS_STATS                       , "sStationsStat"    )
   GET_INT     (PRM_ID_STATIONS_STATS                       , "gStationsStat"    )
+
+  /* RTS Threshold */
+  GET_INT     (PRM_ID_RTS_THRESHOLD                        , "gRtsThreshold")
 };
 
 /********************************************************************

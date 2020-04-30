@@ -812,7 +812,7 @@ _mtlk_dut_core_prepare (mtlk_irbd_t       *irbd,
 
     vap_mgr = mtlk_vap_get_manager(core->vap_handle);
     max_vaps_count = mtlk_vap_manager_get_max_vaps_count(vap_mgr);
-    for (vap_index = max_vaps_count - 1; vap_index >= 0; vap_index--) {
+    for (vap_index = 0; vap_index < max_vaps_count; vap_index++) {
       res = mtlk_vap_manager_get_vap_handle(vap_mgr, vap_index, &vap_handle);
       ILOG0_DD("DUT get vap(%d) handler, res=%d...", vap_index, res);
       if (MTLK_ERR_OK == res) {

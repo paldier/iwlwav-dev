@@ -80,10 +80,31 @@ _exclude_wss_sta (_traf_analyzer_t *ta, const IEEE_ADDR *sta_addr){
 }
 
 /** Convert bytes per interval into bytes per second */
-static uint32 
-_coc_convert_result (uint32 tp_bytes_interval, uint32 coeff)
+static uint64
+_coc_convert_result_64 (uint64 tp_bytes_interval, uint32 coeff)
 {
-  return (uint32) (((uint64) tp_bytes_interval * (uint64) coeff) >> TA_Q_SHIFT);
+  return (uint64) (((uint64) tp_bytes_interval * (uint64) coeff) >> TA_Q_SHIFT);
+}
+
+/** Calculate TP/rate percentage */
+static uint32
+_coc_calc_tp_rate_percentage (uint32 tp_bytes_sec, uint32 max_rate)
+{
+  uint32 bits_sec;
+  uint32 rate_bps;
+  uint32 res;
+
+  if (0 == max_rate) /* unavailable */
+    return 0;
+
+  bits_sec = tp_bytes_sec * 8;  /* 8 bits per byte */
+  rate_bps = MTLK_BITRATE_TO_BPS(max_rate);
+
+  res = bits_sec / (rate_bps / 1000); /* in 0.1 percent units */
+  ILOG1_DDDDD("Rate %u bps, Traffic %u bps (%u bytes/s) -> TP %2u.%u%%",
+              rate_bps, bits_sec, tp_bytes_sec, (res / 10), (res % 10));
+
+  return res;
 }
 
 static _ta_crit_entry_t* 
@@ -107,18 +128,27 @@ _ta_crit_coc (_ta_crit_entry_t *crit)
   sta_entry * sta = NULL;
   _traf_analyzer_t    *ta;
 
-  uint32  max_tp_bytes, max_tp_mibits;
-  uint32  val_rx, val_tx;
+  mtlk_coc_crit_t coc_crit;
+
+  uint32    sta_tp, all_tp;
+  uint32    val_rx, val_tx;
+  uint32    sta_rate;
+  int8      sta_rssi, min_rssi;
+  unsigned  sta_ants, max_ants;
+  unsigned  coc_ants; /* current antennas number */
   
   MTLK_ASSERT(crit != NULL);
   MTLK_ASSERT(crit->signature == TA_CRIT_SIGN);
+  MTLK_ASSERT(crit->clb_ctx);
 
   ta = crit->ta;
 
-  ILOG3_V("COC Criterion Calc");
-
   /* Collect data from WSS counters */
-  max_tp_bytes = 0;
+  all_tp   = 0;
+  max_ants = 0;
+  min_rssi = MAX_INT8;
+  coc_ants = ta->coc_cfg.antennas;
+  ILOG1_DD("COC Criterion calc for %u antennas, interval %u ticks", coc_ants, ta->coc_cfg.interval);
   
   mtlk_osal_mutex_acquire(&ta->sta_wss_list_lock);
   mtlk_dlist_foreach(&ta->sta_wss_list, entry, head)
@@ -133,31 +163,120 @@ _ta_crit_coc (_ta_crit_entry_t *crit)
 
     val_rx = _ta_wss_cntr_update(&sta_wss->coc_rx_bytes, mtlk_sta_get_stat_cntr_rx_bytes(sta));
     val_tx = _ta_wss_cntr_update(&sta_wss->coc_tx_bytes, mtlk_sta_get_stat_cntr_tx_bytes(sta));
+    sta_ants = mtlk_sta_get_max_antennas(sta);
+    sta_rssi = mtlk_sta_get_max_rssi(sta);
+    /* TBD: optimization */
+    sta_rate = mtlk_sta_get_bitrate_max(sta);
+    if ((sta_ants > 0) && (sta_ants != coc_ants)) {
+      sta_rate = sta_rate * MIN(coc_ants, sta_ants) / sta_ants;
+    }
     mtlk_sta_decref(sta);
 
-    ILOG3_YDD("WSS STA %Y rx %d, tx %d", &sta_wss->sta_addr, val_rx, val_tx);
+    sta_tp = _coc_convert_result_64(MAX(val_rx, val_tx), ta->coc_cfg.coeff); /* bytes/s */
+    sta_tp = _coc_calc_tp_rate_percentage(sta_tp, sta_rate);
+    all_tp += sta_tp;
+
+    ILOG1_YDDDDDDD("WSS STA %Y ants %u, rssi %i, rate %u, rx %d, tx %d -> STA_TP %u, ALL_TP %u",
+                   &sta_wss->sta_addr, sta_ants, sta_rssi, sta_rate, val_rx, val_tx, sta_tp, all_tp);
 
     if (!sta_wss->coc_wss_valid){
       /* Skip processing not valid WSS */
-      ILOG3_V("WSS STA skipped");
+      ILOG0_V("WSS STA skipped");
       sta_wss->coc_wss_valid = TRUE;
       continue;
     }
 
-    if (val_rx > max_tp_bytes) max_tp_bytes = val_rx;
-    if (val_tx > max_tp_bytes) max_tp_bytes = val_tx;
+    max_ants = MAX(max_ants, sta_ants);
+    min_rssi = MIN(min_rssi, sta_rssi);
   }
   mtlk_osal_mutex_release(&ta->sta_wss_list_lock);
 
-  max_tp_mibits = _coc_convert_result(max_tp_bytes, ta->coc_cfg.coeff);
-  ILOG3_DD("CoC MAX_TP %d bytes, %d bytes/sec", max_tp_bytes, max_tp_mibits);
-
-  crit->clb(crit->clb_ctx, HANDLE_T(&max_tp_mibits));
+  coc_crit.max_tp   = all_tp;
+  coc_crit.max_ants = max_ants;
+  coc_crit.rssi     = min_rssi;
+  crit->clb(crit->clb_ctx, HANDLE_T(&coc_crit));
 
   return;
 }
 
 static void 
+_ta_crit_erp (_ta_crit_entry_t *crit)
+{
+  mtlk_dlist_entry_t  *entry;
+  mtlk_dlist_entry_t  *head;
+  _sta_wss_entry_t    *sta_wss;
+  sta_entry           *sta = NULL;
+  _traf_analyzer_t    *ta;
+  uint32              num_sta = 0;
+  ta_crit_erp_result_t erp_result;
+  ta_crit_erp_cfg_t ta_crit_cfg;
+
+
+  uint64  max_rx_mibits, max_rx_bytes, max_tx_mibits, max_tx_bytes;
+  uint32  val_rx, val_tx;
+
+  MTLK_ASSERT(crit != NULL);
+  MTLK_ASSERT(crit->signature == TA_CRIT_SIGN);
+
+  ta = crit->ta;
+
+  ILOG3_V("ERP Criterion Calc");
+
+  /* Collect data from WSS counters */
+  max_rx_bytes = 0;
+  max_tx_bytes = 0;
+
+  mtlk_osal_mutex_acquire(&ta->sta_wss_list_lock);
+  mtlk_dlist_foreach(&ta->sta_wss_list, entry, head)
+  {
+    sta_wss = MTLK_LIST_GET_CONTAINING_RECORD(entry, _sta_wss_entry_t, list_entry);
+    sta = mtlk_stadb_find_sta(mtlk_core_get_stadb(mtlk_vap_get_core(sta_wss->vap_handle)),
+                            sta_wss->sta_addr.au8Addr);
+    if (NULL == sta) {
+      ELOG_Y("station %Y not found", sta_wss->sta_addr.au8Addr);
+      continue;
+    }
+
+    num_sta++;
+    val_rx = _ta_wss_cntr_update(&sta_wss->erp_rx_bytes, mtlk_sta_get_stat_cntr_rx_bytes(sta));
+    val_tx = _ta_wss_cntr_update(&sta_wss->erp_tx_bytes, mtlk_sta_get_stat_cntr_tx_bytes(sta));
+    mtlk_sta_decref(sta);
+
+    ILOG3_YDD("WSS STA %Y rx %d, tx %d", &sta_wss->sta_addr,
+      mtlk_sta_get_stat_cntr_rx_bytes(sta), mtlk_sta_get_stat_cntr_tx_bytes(sta));
+    ILOG3_YDD("WSS STA %Y rx %d, tx %d", &sta_wss->sta_addr, val_rx, val_tx);
+
+    if (!sta_wss->erp_wss_valid){
+      /* Skip processing not valid WSS */
+      ILOG3_V("WSS STA skipped");
+      sta_wss->erp_wss_valid = TRUE;
+      continue;
+    }
+
+    max_rx_bytes += val_rx;
+    max_tx_bytes += val_tx;
+  }
+  mtlk_osal_mutex_release(&ta->sta_wss_list_lock);
+
+  max_rx_mibits = _coc_convert_result_64(max_rx_bytes, ta->erp_cfg.coeff);
+  max_tx_mibits = _coc_convert_result_64(max_tx_bytes, ta->erp_cfg.coeff);
+  ILOG3_DDDDD("ERP NUM_STA:%d MAX_TP tx:%d bytes, tx:%d bytes/sec rx:%d bytes, rx:%d bytes/sec",
+    num_sta, max_tx_bytes, max_tx_mibits, max_rx_bytes, max_rx_mibits);
+
+  erp_result.max_rx = max_rx_mibits;
+  erp_result.max_tx = max_tx_mibits;
+  erp_result.sta_num = num_sta;
+  crit->clb(crit->clb_ctx, HANDLE_T(&erp_result));
+
+  /* select interval according to state */
+  ta_crit_cfg.interval = 10; /* 1s */
+  mtlk_ta_erp_cfg(HANDLE_T(ta), &ta_crit_cfg, FALSE);
+
+
+  return;
+}
+
+static void
 _ta_crit_coc_init (_ta_crit_entry_t *crit)
 {
   mtlk_dlist_entry_t  *entry;
@@ -196,6 +315,68 @@ _ta_crit_coc_init (_ta_crit_entry_t *crit)
 
   crit->fcn = _ta_crit_coc;
   return;
+}
+
+static void
+_ta_crit_erp_init (_ta_crit_entry_t *crit)
+{
+  mtlk_dlist_entry_t  *entry;
+  mtlk_dlist_entry_t  *head;
+  _sta_wss_entry_t    *sta_wss;
+  sta_entry * sta = NULL;
+  _traf_analyzer_t *ta;
+
+  MTLK_ASSERT(crit != NULL);
+  MTLK_ASSERT(crit->signature == TA_CRIT_SIGN);
+
+  ta = crit->ta;
+
+  ILOG3_V("ERP Criterion Init");
+
+  /* Init all CoC WSS counters */
+  mtlk_osal_mutex_acquire(&ta->sta_wss_list_lock);
+  mtlk_dlist_foreach(&ta->sta_wss_list, entry, head)
+  {
+    sta_wss = MTLK_LIST_GET_CONTAINING_RECORD(entry, _sta_wss_entry_t, list_entry);
+    sta = mtlk_stadb_find_sta(mtlk_core_get_stadb(mtlk_vap_get_core(sta_wss->vap_handle)),
+                            sta_wss->sta_addr.au8Addr);
+    if (NULL == sta) {
+      ELOG_Y("station %Y not found", sta_wss->sta_addr.au8Addr);
+      continue;
+    }
+
+    _ta_wss_cntr_update(&sta_wss->erp_rx_bytes, mtlk_sta_get_stat_cntr_rx_bytes(sta));
+    _ta_wss_cntr_update(&sta_wss->erp_tx_bytes, mtlk_sta_get_stat_cntr_tx_bytes(sta));
+    mtlk_sta_decref(sta);
+
+    sta_wss->erp_wss_valid = TRUE;
+
+  }
+
+  crit->fcn = _ta_crit_erp;
+  mtlk_osal_mutex_release(&ta->sta_wss_list_lock);
+
+  return;
+}
+
+static void
+_ta_crit_erp_start (_ta_crit_entry_t *crit)
+{
+  _traf_analyzer_t *ta;
+
+  MTLK_ASSERT(crit != NULL);
+  MTLK_ASSERT(crit->signature == TA_CRIT_SIGN);
+
+  ta = crit->ta;
+
+  mtlk_osal_mutex_acquire(&ta->sta_wss_list_lock);
+
+  ILOG0_V("ERP Criterion Start Initial wait");
+
+  crit->fcn = _ta_crit_erp_init;
+
+  mtlk_osal_mutex_release(&ta->sta_wss_list_lock);
+
 }
 
 static void 
@@ -291,20 +472,6 @@ mtlk_ta_delete (mtlk_handle_t ta_handle)
   mtlk_osal_mem_free(ta);
 }
 
-/** AOCS configuration function */
-void __MTLK_IFUNC 
-mtlk_ta_aocs_cfg (mtlk_handle_t ta_handle, ta_crit_aocs_cfg_t *cfg)     
-{
-  _traf_analyzer_t *ta = (_traf_analyzer_t *)ta_handle;
-
-  MTLK_ASSERT(ta_handle != MTLK_INVALID_HANDLE);
-  MTLK_ASSERT(ta->signature == TA_SIGN);
-
-  MTLK_UNREFERENCED_PARAM(ta);
-
-  return;
-}
-
 /** CoC configuration function */
 int __MTLK_IFUNC 
 mtlk_ta_coc_cfg (mtlk_handle_t ta_handle, ta_crit_coc_cfg_t *cfg)
@@ -326,6 +493,7 @@ mtlk_ta_coc_cfg (mtlk_handle_t ta_handle, ta_crit_coc_cfg_t *cfg)
   }
 
   ta->coc_cfg.interval = cfg->interval;
+  ta->coc_cfg.antennas = cfg->antennas;
 
   /* Precalculate coefficient for CoC result conversion */
   ta->coc_cfg.coeff = (1000 << TA_Q_SHIFT) / (ta->coc_cfg.interval * TA_COC_TICK_MSEC); /* 8Q7 */
@@ -334,7 +502,7 @@ mtlk_ta_coc_cfg (mtlk_handle_t ta_handle, ta_crit_coc_cfg_t *cfg)
 
   /* Convert COC ticks to TA ticks */
   crit->tmr_period = (TA_COC_TICK_MSEC * ta->coc_cfg.interval / ta_tmr_res_ms);
-  ILOG2_D("CoC timer set to %d ticks", crit->tmr_period);
+  ILOG1_DD("CoC: %u antennas, timer set to %u ticks", ta->coc_cfg.antennas, crit->tmr_period);
 
   /* Restart counters & timer at next TA tick if already running */
   if (crit->fcn){
@@ -345,6 +513,50 @@ mtlk_ta_coc_cfg (mtlk_handle_t ta_handle, ta_crit_coc_cfg_t *cfg)
   MTLK_ASSERT(crit->tmr_period != 0);
 
   return MTLK_ERR_OK;
+}
+
+/** ERP configuration function */
+int __MTLK_IFUNC
+mtlk_ta_erp_cfg (mtlk_handle_t ta_handle, ta_crit_erp_cfg_t *cfg, BOOL restart_fn)
+{
+      _traf_analyzer_t *ta;
+      _ta_crit_entry_t *crit;
+      uint32  ta_tmr_res_ms;
+
+      MTLK_ASSERT(ta_handle != MTLK_INVALID_HANDLE);
+
+      ta = (_traf_analyzer_t *)ta_handle;
+      MTLK_ASSERT(ta->signature == TA_SIGN);
+
+      ta_tmr_res_ms = mtlk_osal_atomic_get(&ta->timer_res_ms);
+
+      if ((cfg->interval * TA_COC_TICK_MSEC) < ta_tmr_res_ms) {
+        WLOG_D("Value shouldn't be less than timer resolution %d msec",ta_tmr_res_ms);
+        return MTLK_ERR_PARAMS;
+      }
+
+      ta->erp_cfg.interval = cfg->interval;
+
+      /* Precalculate coefficient for CoC result conversion */
+      ta->erp_cfg.coeff = (1000 << TA_Q_SHIFT) / (ta->erp_cfg.interval * TA_COC_TICK_MSEC); /* 8Q7 */
+
+      crit = &ta->crit_tbl[TA_CRIT_ID_ERP];
+
+      /* Convert COC ticks to TA ticks */
+      crit->tmr_period = (TA_COC_TICK_MSEC * ta->erp_cfg.interval / ta_tmr_res_ms);
+      ILOG3_D("ERP timer set to %d ticks", crit->tmr_period);
+
+      /* Restart counters & timer at next TA tick if already running */
+      if (restart_fn) {
+        if (crit->fcn){
+          crit->tmr_cnt = crit->tmr_period - 1;
+          crit->fcn = _ta_crit_erp_start;
+        }
+      }
+
+      MTLK_ASSERT(crit->tmr_period != 0);
+
+      return MTLK_ERR_OK;
 }
 
 /** Getter for timer resolution */
@@ -473,7 +685,7 @@ mtlk_ta_crit_start (mtlk_handle_t crit_handle)
   _traf_analyzer_t *ta;
   _ta_crit_entry_t *crit;
 
-  ILOG2_D("Crit START 0x%08X", (uint32)crit_handle);
+  ILOG1_D("Crit START 0x%08X", (uint32)crit_handle);
   crit = (_ta_crit_entry_t*)crit_handle;
 
   MTLK_ASSERT(crit != NULL);
@@ -484,7 +696,7 @@ mtlk_ta_crit_start (mtlk_handle_t crit_handle)
 
   ta = crit->ta;
   if (0 == ta->active_crit_num) {
-    ILOG2_V("TA timer started");
+    ILOG1_D("TA timer started", mtlk_osal_atomic_get(&ta->timer_res_ms));
     mtlk_osal_timer_set(&ta->timer, mtlk_osal_atomic_get(&ta->timer_res_ms));
   }
 
@@ -494,12 +706,13 @@ mtlk_ta_crit_start (mtlk_handle_t crit_handle)
     /* Restart counters & timer at next TA tick */
     switch(crit->id){
       case TA_CRIT_ID_COC:  crit->fcn = _ta_crit_coc_init;  break;
+      case TA_CRIT_ID_ERP:  crit->fcn = _ta_crit_erp_init;  break;
       default : break;
     }
     crit->tmr_cnt = crit->tmr_period - 1;
 
     ta->active_crit_num ++;
-    ILOG2_DP("Criterion %d (%p) STARTED ", (int)crit->id, crit);
+    ILOG1_DP("Criterion %d (%p) STARTED ", (int)crit->id, crit);
   }
 
   return;
@@ -526,7 +739,7 @@ mtlk_ta_crit_stop (mtlk_handle_t crit_handle)
 
   if (0 == ta->active_crit_num) {
     ILOG2_V("TA timer stoped");
-    mtlk_osal_timer_cancel(&ta->timer);
+    mtlk_osal_timer_cancel_sync(&ta->timer);
   }
  
   return;
@@ -630,10 +843,11 @@ int ta_timer (mtlk_handle_t ta_handle, const void *data,  uint32 data_size)
     if (!crit->fcn) continue;   /* Not started */
     if (!crit->clb) continue;   /* No one registered */
 
+
     /* Check is time to start calculation */
     crit->tmr_cnt ++;
     
-    ILOG3_DD("Crit %d tmr %d", crit->id, crit->tmr_cnt);
+    ILOG3_DDD("Crit %d tmr %d", crit->id, crit->tmr_cnt, crit->tmr_period);
 
     if (crit->tmr_cnt == crit->tmr_period){
       crit->tmr_cnt = 0;

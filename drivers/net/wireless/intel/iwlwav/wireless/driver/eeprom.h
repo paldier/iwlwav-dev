@@ -91,15 +91,15 @@ typedef struct {
       struct {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
              /* Name in ABB API    Bits in Byte  Name in EFUSE map */
-        uint32  ldo_central_clkin   : 4; /*  3   ldofsys        */
-        uint32  ldo_central_clkd    : 4; /*  3   ldoclkd        */
-        uint32  iptattrim           : 4; /*  2   r_ptat_conf    */
-        uint32  ldo_central_pllpost : 4; /*  2   ldo0v95pllpost */
+        uint32  vreftrim            : 4; /*  0   bgp_vref_conf  */
+        uint32  ibiastrim           : 4; /*  0   r_bias_conf    */
         uint32  ldo_central_pllref  : 4; /*  1   ldo0v95pllvref */
         uint32  ldo_central_pll1v8  : 3; /*  1   vreg1v8pll     */
         uint32  trim_indicator      : 1; /*  1   trim_indicator */
-        uint32  vreftrim            : 4; /*  0   bgp_vref_conf  */
-        uint32  ibiastrim           : 4; /*  0   r_bias_conf    */
+        uint32  iptattrim           : 4; /*  2   r_ptat_conf    */
+        uint32  ldo_central_pllpost : 4; /*  2   ldo0v95pllpost */
+        uint32  ldo_central_clkin   : 4; /*  3   ldofsys        */
+        uint32  ldo_central_clkd    : 4; /*  3   ldoclkd        */
 #elif defined(__BIG_ENDIAN_BITFIELD)
              /* Name in ABB API    Bits in Byte  Name in EFUSE map */
         uint32  ibiastrim           : 4; /*  0   r_bias_conf    */

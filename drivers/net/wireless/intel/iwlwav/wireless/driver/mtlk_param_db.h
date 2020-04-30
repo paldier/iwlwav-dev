@@ -88,15 +88,6 @@ typedef enum {
   PARAM_DB_CORE_STA_LIMIT_MIN,
   PARAM_DB_CORE_STA_LIMIT_MAX,
 
-#ifdef MTLK_PDB_UNIT_TEST
-  PARAM_DB_MODULE_A_TEST_STRING,
-  PARAM_DB_MODULE_A_TEST_INT1,
-  PARAM_DB_MODULE_A_TEST_INT2,
-  PARAM_DB_MODULE_A_TEST_BINARY,
-  PARAM_DB_MODULE_B_TEST_INT1,
-  PARAM_DB_MODULE_B_TEST_STRING,
-#endif /* MTLK_PDB_UNIT_TEST */
-
   /* RX Threshold */
   PARAM_DB_CORE_RX_THRESHOLD,                /*!< Mirror of FW's "Set High Reception Threshold": UMI_RX_TH.rxThValue */
   PARAM_DB_CORE_4ADDR_MODE,                  /*!< Four address mode */
@@ -120,6 +111,12 @@ typedef enum {
   PARAM_DB_CORE_MGMT_FRAMES_RATE,   /*!< Management frames rate */
 
   PARAM_DB_CORE_BEACON_PERIOD,      /*!< MIB_BEACON_PERIOD */
+
+  PARAM_DB_CORE_CSA_DEAUTH_PARAMS,        /*!< CSA deauth multicast frames data */
+
+  PARAM_DB_CORE_HE_NON_ADVERTISED,  /*!< Non advertised HE capabilities */
+
+  PARAM_DB_CORE_HE_DEBUG_DATA,     /*!< HE debug data */
 
   PARAM_DB_CORE_LAST_VALUE_ID,      /*!< Last parameter ID */
 } mtlk_pdb_id_t;/*!< \Enum of the parameters IDs. When adding parameter - extend this enum */
@@ -190,7 +187,6 @@ typedef enum {
   PARAM_DB_RADIO_ACS_UPDATE_TO,                             /*!< AOCS update timeout */
   PARAM_DB_RADIO_MU_OPERATION,                              /*!< MU operation */
   PARAM_DB_RADIO_HE_MU_OPERATION,                           /*!< HE MU operation */
-  PARAM_DB_RADIO_DISABLE_MASTER_VAP,                        /*!< Disable master VAP to support full vap reconf */
   PARAM_DB_RADIO_RADAR_RSSI_TH,                             /*!< Radar Detection RSSI threshold */
   PARAM_DB_RADIO_RTS_DYNAMIC_BW,                            /*!< Signaling of RTS frame with dynamic bw */
   PARAM_DB_RADIO_RTS_STATIC_BW,                             /*!< Signaling of RTS frame with static bw */
@@ -226,7 +222,6 @@ typedef enum {
   PARAM_DB_RADIO_FAST_DROP,                                 /*!< Fast Drop */
   PARAM_DB_RADIO_FIXED_LTF_AND_GI,                          /*!< Fixed LTF and GI */
   PARAM_DB_RADIO_PLAN_MU_GROUP_STATS,                       /*!< HE MU Group manager statistics */
-  PARAM_DB_RADIO_ERP_CFG,                                   /*!< Effective radiated power*/
   PARAM_DB_RADIO_DYNAMIC_MC_RATE,                           /*!< Dynamic Multicast Rate */
   PARAM_DB_RADIO_WLAN_COUNTERS_SRC,                         /*!< WLAN counters source switch */
   PARAM_DB_RADIO_TEST_BUS_MODE,                             /*!< Test Bus mode */
@@ -235,9 +230,9 @@ typedef enum {
   PARAM_DB_RADIO_DYNAMIC_MU_TYPE,                           /*!< Dynamic MU Type */
   PARAM_DB_RADIO_HE_MU_FIXED_PARAMTERS,                     /*!< HE MU Fixed Parameters */
   PARAM_DB_RADIO_HE_MU_DURATION,                            /*!< HE MU Duration */
-  PARAM_DB_RADIO_HE_NON_ADVERTISED,                         /*!< Non advertised HE capabilities */
   PARAM_DB_RADIO_ZWDFS_ANT_ACTIVE,                          /*!< ZWDFS Antenna Enabled/Disable */
   PARAM_DB_RADIO_STATIONS_STATS_ENABLED,                    /*!< Stations statistics enabled */
+  PARAM_DB_RADIO_AP_RETRY_LIMIT,                            /*!< AP retry limit value */
 
   PARAM_DB_RADIO_LAST_VALUE_ID                              /*!< Last parameter ID */
 } mtlk_pdb_radio_id_t;                                      /*!< \Enum of the parameters IDs. When adding parameter - extend this enum */
@@ -755,15 +750,6 @@ static unsigned __INLINE mtlk_pdb_fast_cmp_mac(mtlk_pdb_handle_t handle, const v
 
   return result;
 }
-
-
-/*! Runs different tests with current module's functions. MTLK_PDB_UNIT_TEST should be defined to enable the compilation of functioning function
-
-    \param  obj  Initialized parameter db object to test
-
-    \return MTLK_ERR_xxx   According to test case
-*/
-int __MTLK_IFUNC wave_pdb_unit_test(mtlk_pdb_t* obj);
 
 #undef LOG_LOCAL_GID
 #undef LOG_LOCAL_FID

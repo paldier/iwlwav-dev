@@ -157,6 +157,7 @@
 #define MTLK_MEM_TAG_VENDOR_CMD_DATA    'vcmd'
 #define WAVE_MEM_TAG_FAPI_IF            'fapi'
 #define MTLK_MEM_TAG_TIMER              'timr'
+#define MTLK_MEM_TAG_CSA_DEAUTH_DATA    'csde'
 
 #endif //_MTLK_MEMTAGS_H_
 

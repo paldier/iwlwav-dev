@@ -107,6 +107,33 @@ static const uint32 _mtlk_sta_wss_id_map[] =
 #define _mtlk_sta_inc_cnt(sta, id)         { if (id##_ALLOWED) __mtlk_sta_inc_cnt(sta, id); }
 #define _mtlk_sta_add_cnt(sta, id, val)    { if (id##_ALLOWED) __mtlk_sta_add_cnt(sta, id, val); }
 
+
+static __INLINE uint32
+__mtlk_sta_get_phy_rate_synched_to_psdu_rate(const sta_entry *sta)
+{
+  MTLK_ASSERT(sta);
+  return sta->info.stats.phy_rate_synched_to_psdu_rate;
+}
+
+static __INLINE uint32
+__mtlk_sta_get_phy_rate_synched_to_psdu_rate_kbps(const sta_entry *sta)
+{
+  return MTLK_BITRATE_TO_KBPS(__mtlk_sta_get_phy_rate_synched_to_psdu_rate(sta));
+}
+
+static __INLINE uint32
+__mtlk_sta_get_max_phy_rate_synched_to_psdu_rate(const sta_entry *sta)
+{
+  MTLK_ASSERT(sta);
+  return sta->info.stats.max_phy_rate_synched_to_psdu_rate;
+}
+
+static __INLINE uint32
+__mtlk_sta_get_max_phy_rate_synched_to_psdu_rate_kbps(const sta_entry *sta)
+{
+  return MTLK_BITRATE_TO_KBPS(__mtlk_sta_get_max_phy_rate_synched_to_psdu_rate(sta));
+}
+
 static __INLINE void
 __mtlk_sta_inc_cnt (sta_entry        *sta,
                    sta_info_cnt_id_e cnt_id)
@@ -190,6 +217,12 @@ _mtlk_sta_get_tx_data_rate (const sta_entry *sta)
   return mtlk_bitrate_params_to_rate(sta->info.stats.tx_data_rate_params);
 }
 
+static uint32
+_mtlk_sta_get_max_tx_data_rate (const sta_entry *sta)
+{
+  return sta->info.stats.max_tx_data_rate;
+}
+
 static uint8
 _mtlk_sta_airtime_usage_get (const sta_entry *sta)
 {
@@ -218,6 +251,12 @@ static __INLINE uint32
 __mtlk_sta_get_rx_data_rate_kbps (const sta_entry *sta)
 {
   return MTLK_BITRATE_TO_KBPS(_mtlk_sta_get_rx_data_rate(sta));
+}
+
+static __INLINE uint32
+__mtlk_sta_get_max_tx_data_rate_kbps (const sta_entry *sta)
+{
+  return MTLK_BITRATE_TO_KBPS(_mtlk_sta_get_max_tx_data_rate(sta));
 }
 
 static __INLINE uint32
@@ -334,7 +373,7 @@ mtlk_sta_get_associated_dev_stats (const sta_entry* sta, peerFlowStats* peer_sta
   peer_stats->cli_tx_retries = sta->sta_stats64_cntrs.txRetryCount;
   peer_stats->cli_rx_errors  = sta->sta_stats64_cntrs.swUpdateDrop + sta->sta_stats64_cntrs.rdDuplicateDrop + sta->sta_stats64_cntrs.missingSn;
   peer_stats->cli_tx_errors  = sta->sta_stats64_cntrs.tx_errors;
-  peer_stats->cli_rx_rate    = __mtlk_sta_get_rx_data_rate_kbps(sta);
+  peer_stats->cli_rx_rate    = __mtlk_sta_get_phy_rate_synched_to_psdu_rate_kbps(sta);
   peer_stats->cli_tx_rate    = __mtlk_sta_get_tx_data_rate_kbps(sta);
   mtlk_hw_get_peer_rssi_snapshot_ack(sta, &peer_stats->cli_rssi_ack);
 }
@@ -370,7 +409,7 @@ mtlk_sta_get_tr181_peer_stats (const sta_entry* sta, mtlk_wssa_drv_tr181_peer_st
   stats->ErrorsSent = 0; /* Not available in FW so far */
 
   stats->LastDataDownlinkRate = __mtlk_sta_get_tx_data_rate_kbps(sta);
-  stats->LastDataUplinkRate   = __mtlk_sta_get_rx_data_rate_kbps(sta);
+  stats->LastDataUplinkRate   = __mtlk_sta_get_phy_rate_synched_to_psdu_rate_kbps(sta);
 
   stats->SignalStrength = sta->info.stats.max_rssi;
 }
@@ -482,20 +521,17 @@ _mtlk_sta_fill_rate_info_by_info (mtlk_wssa_drv_peer_rate_info1_t *info, mtlk_bi
 static void
 _mtlk_sta_fill_rate_info_by_psdu_info (mtlk_wssa_drv_peer_rate_info1_t *info, mtlk_bitrate_info16_t psdu_rate_info)
 {
+  uint8 mcs, nss;
+
   info->InfoFlag = TRUE;
   info->PhyMode  = mtlk_bitrate_params_get_psdu_mode(psdu_rate_info);
   info->CbwIdx   = mtlk_bitrate_params_get_psdu_cbw(psdu_rate_info);
   info->CbwMHz   = _mtlk_sta_rate_cbw_to_cbw_in_mhz(info->CbwIdx);
   info->Scp      = -1; //Not Avaialble
-  mtlk_bitrate_params_get_psdu_mcs_and_nss(psdu_rate_info, (uint8*)&info->Mcs, (uint8*)&info->Nss);
 
-}
-
-static uint32
-_mtlk_sta_get_phy_rate_synched_to_psdu_rate(const sta_entry *sta)
-{
-  MTLK_ASSERT(sta);
-  return sta->info.stats.phy_rate_synched_to_psdu_rate;
+  mtlk_bitrate_params_get_psdu_mcs_and_nss(psdu_rate_info, &mcs, &nss);
+  info->Mcs = mcs;
+  info->Nss = nss;
 }
 
 void __MTLK_IFUNC mtlk_core_get_tx_power_data(mtlk_core_t *core, mtlk_tx_power_data_t *tx_power_data);
@@ -551,7 +587,7 @@ _mtlk_sta_get_peer_rates_info(const sta_entry *sta, mtlk_wssa_drv_peer_rates_inf
   rates_info->RxMgmtRate = _mtlk_sta_get_rx_mgmt_rate(sta);
   _mtlk_sta_fill_rate_info_by_info(&rates_info->rx_mgmt_rate_info, sta->info.stats.rx_mgmt_rate_info);
 
-  rates_info->RxDataRate = _mtlk_sta_get_phy_rate_synched_to_psdu_rate(sta);
+  rates_info->RxDataRate = __mtlk_sta_get_phy_rate_synched_to_psdu_rate(sta);
   _mtlk_sta_fill_rate_info_by_psdu_info(&rates_info->rx_data_rate_info, sta->info.stats.rx_psdu_data_rate_info);
 }
 
@@ -1038,6 +1074,13 @@ mtlk_sta_update_phy_info (sta_entry *sta, mtlk_hw_t *hw, stationPhyRxStatusDb_t 
         MTLK_BITRATE_INFO_BY_PSDU_RATE(sta_status->psduRate);
 
     sta->info.stats.phy_rate_synched_to_psdu_rate = sta_status->phyRateSynchedToPsduRate;
+
+    if(sta->info.stats.max_tx_data_rate < _mtlk_sta_get_tx_data_rate(sta)) {
+      sta->info.stats.max_tx_data_rate = _mtlk_sta_get_tx_data_rate(sta);
+    }
+    if(sta->info.stats.max_phy_rate_synched_to_psdu_rate < sta->info.stats.phy_rate_synched_to_psdu_rate) {
+      sta->info.stats.max_phy_rate_synched_to_psdu_rate = sta->info.stats.phy_rate_synched_to_psdu_rate;
+    }
     mtlk_osal_lock_release(&sta->lock);
 }
 
@@ -1074,7 +1117,7 @@ wave_sta_get_dev_diagnostic_res2(mtlk_core_t *core, const sta_entry* sta, wifiAs
 {
   uint32 band_width;
   int i;
-  char *operating_standard[]={"802.11a","802.11b","802.11g","802.11n","802.11ac","802.11ax"};
+  static const char *operating_standard[]={"802.11a","802.11b","802.11g","802.11n","802.11ac","802.11ax"};
   struct mtlk_chan_def *current_chandef = __wave_core_chandef_get(core);
   MTLK_ASSERT(sta != NULL);
   MTLK_ASSERT(dev_diagnostic_stats != NULL);
@@ -1082,7 +1125,7 @@ wave_sta_get_dev_diagnostic_res2(mtlk_core_t *core, const sta_entry* sta, wifiAs
   memset(dev_diagnostic_stats, 0, sizeof(wifiAssociatedDevDiagnostic2_t));
   dev_diagnostic_stats->AuthenticationState                = true;
   dev_diagnostic_stats->LastDataDownlinkRate               = __mtlk_sta_get_tx_data_rate_kbps(sta);
-  dev_diagnostic_stats->LastDataUplinkRate                 = __mtlk_sta_get_rx_data_rate_kbps(sta);
+  dev_diagnostic_stats->LastDataUplinkRate                 = __mtlk_sta_get_phy_rate_synched_to_psdu_rate_kbps(sta);
   dev_diagnostic_stats->SignalStrength                     = sta->info.stats.max_rssi;
   dev_diagnostic_stats->Retransmissions                    = sta->sta_stats_cntrs.mpduFirstRetransmission;
   dev_diagnostic_stats->Active                             = true;
@@ -1094,7 +1137,7 @@ wave_sta_get_dev_diagnostic_res2(mtlk_core_t *core, const sta_entry* sta, wifiAs
   dev_diagnostic_stats->MaxRSSI                            = sta->sta_stats_cntrs.maxRssi;
   mtlk_snprintf(dev_diagnostic_stats->OperatingChannelBandwidth, sizeof(dev_diagnostic_stats->OperatingChannelBandwidth), "%d", band_width);
 
-  for(i = 0; i < ARRAY_SIZE(operating_standard); i++) {
+  for(i = ARRAY_SIZE(operating_standard)-1; i >= 0; i--) {
     if (MTLK_BIT_GET(sta->info.sta_net_modes, i)) {
       /* sta_net_modes - bit 0 - 802.11a  */
       /* sta_net_modes - bit 1 - 802.11b  */
@@ -1411,23 +1454,108 @@ mtlk_stadb_iterate_done (mtlk_stadb_iterator_t *iter)
 }
 
 void __MTLK_IFUNC
-wave_sta_get_dev_diagnostic_res3(mtlk_core_t *core, const sta_entry* sta, wifiAssociatedDevDiagnostic3_t *dev_diagnostic_stats)
+mtlk_stadb_iterate_done_none_decref (mtlk_stadb_iterator_t *iter)
 {
+  MTLK_ASSERT(iter != NULL);
+  MTLK_ASSERT(iter->arr != NULL);
+
+  mtlk_osal_mem_free(iter->arr);
+  memset(iter, 0, sizeof(*iter));
+}
+
+void __MTLK_IFUNC
+wave_sta_get_dev_diagnostic_res3(mtlk_core_t *core, sta_entry* sta, wifiAssociatedDevDiagnostic3_t *dev_diagnostic_stats)
+{
+   uint8 agreement = 0, ru_allocation_count = 0, latest_ru = 0;
    MTLK_ASSERT(sta != NULL);
    MTLK_ASSERT(dev_diagnostic_stats != NULL);
 
    memset(dev_diagnostic_stats, 0, sizeof(wifiAssociatedDevDiagnostic3_t));
    wave_sta_get_dev_diagnostic_res2(core, sta, &dev_diagnostic_stats->wifiAssociatedDevDiagnostic2);
-   /*Updating Result3 parameters*/
+
    dev_diagnostic_stats->PacketsSent        = sta->sta_stats64_cntrs.successCount + sta->sta_stats64_cntrs.exhaustedCount;
    dev_diagnostic_stats->PacketsReceived    = sta->sta_stats64_cntrs.rdCount;
-   dev_diagnostic_stats->ErrorsSent         = sta->sta_stats64_cntrs.exhaustedCount;
-   dev_diagnostic_stats->RetransCount       = 0; /*Not available in FW*/
+   dev_diagnostic_stats->ErrorsSent         = sta->sta_stats64_cntrs.exhaustedCount + sta->sta_stats64_cntrs.dropCntReasonClassifier + sta->sta_stats64_cntrs.dropCntReasonDisconnect + sta->sta_stats64_cntrs.dropCntReasonATF + sta->sta_stats64_cntrs.dropCntReasonTSFlush + sta->sta_stats64_cntrs.dropCntReasonReKey + sta->sta_stats64_cntrs.dropCntReasonSetKey + sta->sta_stats64_cntrs.dropCntReasonDiscard + sta->sta_stats64_cntrs.dropCntReasonDsabled + sta->sta_stats64_cntrs.dropCntReasonAggError;
+   dev_diagnostic_stats->RetransCount       = sta->sta_stats64_cntrs.packetRetransCount;
    dev_diagnostic_stats->FailedRetransCount = sta->sta_stats64_cntrs.exhaustedCount;
-   dev_diagnostic_stats->RetryCount         = 0; /*Not available in FW*/
+   dev_diagnostic_stats->RetryCount         = sta->sta_stats64_cntrs.oneOrMoreRetryCount;
    dev_diagnostic_stats->MultipleRetryCount = sta->sta_stats64_cntrs.txRetryCount;
-   dev_diagnostic_stats->MaxDownlinkRate    = __mtlk_sta_get_tx_data_rate_kbps(sta);
-   dev_diagnostic_stats->MaxUplinkRate      = __mtlk_sta_get_rx_data_rate_kbps(sta);
+   dev_diagnostic_stats->MaxDownlinkRate    = __mtlk_sta_get_max_tx_data_rate_kbps(sta);
+   dev_diagnostic_stats->MaxUplinkRate      = __mtlk_sta_get_max_phy_rate_synched_to_psdu_rate_kbps(sta);
+
+   dev_diagnostic_stats->TwtParams.agreementType = sta->sta_stats_cntrs.twtStaParams.twtAgreement[agreement].agreementType;
+   dev_diagnostic_stats->TwtParams.operation.implicit = sta->sta_stats_cntrs.twtStaParams.twtAgreement[agreement].operation.implicit;
+   dev_diagnostic_stats->TwtParams.operation.announced = sta->sta_stats_cntrs.twtStaParams.twtAgreement[agreement].operation.announced;;
+   dev_diagnostic_stats->TwtParams.operation.triggerEnabled = sta->sta_stats_cntrs.twtStaParams.twtAgreement[agreement].operation.triggerEnabled;
+   dev_diagnostic_stats->TwtParams.patams.individual.wakeTime = sta->sta_stats_cntrs.twtStaParams.twtAgreement[agreement].params.individual.wakeTime;
+   dev_diagnostic_stats->TwtParams.patams.individual.wakeInterval = sta->sta_stats_cntrs.twtStaParams.twtAgreement[agreement].params.individual.wakeInterval;
+   dev_diagnostic_stats->TwtParams.patams.individual.minWakeDuration = sta->sta_stats_cntrs.twtStaParams.twtAgreement[agreement].params.individual.minWakeDuration;
+   dev_diagnostic_stats->TwtParams.patams.individual.channel = sta->sta_stats_cntrs.twtStaParams.twtAgreement[agreement].params.individual.channel;
+
+    dev_diagnostic_stats->UplinkMuStats.UpinkMuType = sta->sta_stats_cntrs.uplinkMuStats.uplinkMuType;
+    latest_ru = sta->sta_stats_cntrs.uplinkMuStats.allocatedUplinkRuNum;
+    if(sta->sta_stats_cntrs.uplinkMuStats.uplinkRuNumFlag){
+      dev_diagnostic_stats->UplinkMuStats.AllocatedUplinkRuNum = HAL_MAX_RU_ALLOCATIONS_DRV;
+    } else{
+      dev_diagnostic_stats->UplinkMuStats.AllocatedUplinkRuNum = sta->sta_stats_cntrs.uplinkMuStats.allocatedUplinkRuNum;
+    }
+    for(ru_allocation_count = 0; ru_allocation_count < dev_diagnostic_stats->UplinkMuStats.AllocatedUplinkRuNum; ru_allocation_count++){
+      dev_diagnostic_stats->UplinkMuStats.UplinkRuAllocations[ru_allocation_count].subchannels = sta->sta_stats_cntrs.uplinkMuStats.uplinkRuAllocations[latest_ru].subChannels;
+      dev_diagnostic_stats->UplinkMuStats.UplinkRuAllocations[ru_allocation_count].type = sta->sta_stats_cntrs.uplinkMuStats.uplinkRuAllocations[latest_ru].type;
+      if(latest_ru == 0){
+        latest_ru = HAL_MAX_RU_ALLOCATIONS_DRV - 1;
+      } else {
+        latest_ru--;
+      }
+    }
+    memset(&sta->sta_stats_cntrs.uplinkMuStats.uplinkRuAllocations, 0, sizeof(sta->sta_stats_cntrs.uplinkMuStats.uplinkRuAllocations));
+    sta->sta_stats_cntrs.uplinkMuStats.allocatedUplinkRuNum = 0;
+    for(ru_allocation_count = 0; ru_allocation_count < HAL_MAX_BSR; ru_allocation_count++) {
+      switch(ru_allocation_count) {
+        case 0: dev_diagnostic_stats->UplinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryBestEffort; break;
+        case 1: dev_diagnostic_stats->UplinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryBackground; break;
+        case 2: dev_diagnostic_stats->UplinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryBackground; break;
+        case 3: dev_diagnostic_stats->UplinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryBestEffort; break;
+        case 4: dev_diagnostic_stats->UplinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryVideo; break;
+        case 5: dev_diagnostic_stats->UplinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryVideo; break;
+        case 6: dev_diagnostic_stats->UplinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryVoice; break;
+        case 7: dev_diagnostic_stats->UplinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryVoice; break;
+      }
+        dev_diagnostic_stats->UplinkMuStats.BufferStatus[ru_allocation_count].queueSize = sta->sta_stats_cntrs.uplinkMuStats.ulBufferStatus[ru_allocation_count].queueSize;
+    }
+
+    dev_diagnostic_stats->DownlinkMuStats.DownlinkMuType = sta->sta_stats_cntrs.downlinkMuStats.downlinkMuType;
+    latest_ru = sta->sta_stats_cntrs.downlinkMuStats.allocatedDownlinkRuNum;
+    if(sta->sta_stats_cntrs.downlinkMuStats.downlinkRuNumFlag){
+      dev_diagnostic_stats->DownlinkMuStats.AllocatedDownlinkRuNum = HAL_MAX_RU_ALLOCATIONS_DRV;
+    } else{
+      dev_diagnostic_stats->DownlinkMuStats.AllocatedDownlinkRuNum = sta->sta_stats_cntrs.downlinkMuStats.allocatedDownlinkRuNum;
+    }
+    for(ru_allocation_count = 0; ru_allocation_count < dev_diagnostic_stats->DownlinkMuStats.AllocatedDownlinkRuNum; ru_allocation_count++){
+      dev_diagnostic_stats->DownlinkMuStats.DownlinkRuAllocations[ru_allocation_count].subchannels = sta->sta_stats_cntrs.downlinkMuStats.downlinkRuAllocations[ru_allocation_count].subChannels;
+      dev_diagnostic_stats->DownlinkMuStats.DownlinkRuAllocations[ru_allocation_count].type = sta->sta_stats_cntrs.downlinkMuStats.downlinkRuAllocations[ru_allocation_count].type;
+      if(latest_ru == 0){
+        latest_ru = HAL_MAX_RU_ALLOCATIONS_DRV - 1;
+      } else {
+        latest_ru--;
+      }
+    }
+    memset(&sta->sta_stats_cntrs.downlinkMuStats.downlinkRuAllocations, 0, sizeof(sta->sta_stats_cntrs.downlinkMuStats.downlinkRuAllocations));
+    sta->sta_stats_cntrs.downlinkMuStats.allocatedDownlinkRuNum = 0;
+    for(ru_allocation_count = 0; ru_allocation_count < HAL_MAX_BSR; ru_allocation_count++) {
+      switch(ru_allocation_count) {
+        case 0: dev_diagnostic_stats->DownlinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryBestEffort; break;
+        case 1: dev_diagnostic_stats->DownlinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryBackground; break;
+        case 2: dev_diagnostic_stats->DownlinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryBackground; break;
+        case 3: dev_diagnostic_stats->DownlinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryBestEffort; break;
+        case 4: dev_diagnostic_stats->DownlinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryVideo; break;
+        case 5: dev_diagnostic_stats->DownlinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryVideo; break;
+        case 6: dev_diagnostic_stats->DownlinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryVoice; break;
+        case 7: dev_diagnostic_stats->DownlinkMuStats.BufferStatus[ru_allocation_count].accessCategory = wlanAccessCategoryVoice; break;
+      }
+      dev_diagnostic_stats->UplinkMuStats.BufferStatus[ru_allocation_count].queueSize = sta->sta_stats_cntrs.downlinkMuStats.dlBufferStatus[ru_allocation_count].queueSize;
+    }
+
 }
 
 int __MTLK_IFUNC
@@ -1545,11 +1673,12 @@ mtlk_stadb_disconnect_all (sta_db *stadb,
       station_del_parameters.reason_code = WLAN_REASON_UNSPECIFIED;
 
       mtlk_stadb_remove_sta(stadb, sta);
+      mtlk_sta_decref(sta); /*sta must not be used after this step */
       ieee80211_del_station(wdev->wiphy, mtlk_df_user_get_ndev(df_user), &station_del_parameters);
 
       sta = (sta_entry*)mtlk_stadb_iterate_next(&iter);
     } while (sta);
-    mtlk_stadb_iterate_done(&iter);
+    mtlk_stadb_iterate_done_none_decref(&iter);
   }
 
   if (!mtlk_stadb_is_empty(stadb)) {
@@ -1943,13 +2072,14 @@ mtlk_hstdb_update_host (hst_db* hstdb, const unsigned char *mac, IEEE_ADDR * sta
 
   mtlk_osal_lock_acquire(&hstdb->lock);
   h = mtlk_hash_find_ieee_addr(&hstdb->hash, (IEEE_ADDR *)mac);
-  mtlk_osal_lock_release(&hstdb->lock);
+
   if (h) {
     host_entry *host = MTLK_CONTAINER_OF(h, host_entry, hentry);
     /* Station already associated with HOST - just update timestamp */
     _mtlk_hst_update(host, sta_addr);
-  }
-  else {
+    mtlk_osal_lock_release(&hstdb->lock);
+  } else {
+    mtlk_osal_lock_release(&hstdb->lock);
 
     ILOG2_V("Can't find peer (HOST), adding...");
     _mtlk_hstdb_add_host(hstdb, mac, sta_addr);

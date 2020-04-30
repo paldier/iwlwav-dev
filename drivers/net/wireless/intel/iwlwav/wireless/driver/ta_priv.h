@@ -51,7 +51,10 @@ typedef struct __sta_wss_entry_t {
 
   _ta_wss_cntr_t  coc_rx_bytes;
   _ta_wss_cntr_t  coc_tx_bytes;
+  _ta_wss_cntr_t  erp_rx_bytes;
+  _ta_wss_cntr_t  erp_tx_bytes;
   BOOL            coc_wss_valid;
+  BOOL            erp_wss_valid;
 } _sta_wss_entry_t;
 
 typedef struct __ta_crit_entry_t {
@@ -77,7 +80,7 @@ typedef struct __traf_analyzer_t {
   mtlk_atomic_t       timer_res_ms;     /* Timer resolution in ms */
 
   ta_crit_coc_cfg_t   coc_cfg;          /* COC configuration */
-  ta_crit_aocs_cfg_t  aocs_cfg;         /* AOCS configuration */
+  ta_crit_erp_cfg_t   erp_cfg;          /* erp configuration */
 
   _ta_crit_entry_t crit_tbl[TA_CRIT_NUM];
   uint32              active_crit_num;

@@ -290,23 +290,34 @@ _hw_rate_params_to_rate (uint32 mode, uint32 cbw, uint32 scp, uint32 mcs, uint32
 
   ILOG2_DDDDDD("mcs %2d, mode %d, cbw %d, scp %d, nss %d, rate %d", mcs, mode, cbw, scp, nss, rate);
 
-  if (MTLK_BITRATE_INVALID == rate) {
-    WLOG_DDDDD("Rate is not found: mcs %2d, mode %d, cbw %d, scp %d, nss %d", mcs, mode, cbw, scp, nss);
-  }
-
   return rate;
 }
 
 uint32 __MTLK_IFUNC
 mtlk_bitrate_hw_params_to_rate (uint32 mode, uint32 cbw, uint32 scp, uint32 mcs, uint32 nss)
 {
-  return _hw_rate_params_to_rate(mode, cbw, scp, mcs, nss);
+  uint32 rate = _hw_rate_params_to_rate(mode, cbw, scp, mcs, nss);
+  if (MTLK_BITRATE_INVALID == rate) {
+    WLOG_DDDDD("Rate is not found: mcs %2d, mode %d, cbw %d, scp %d, nss %d", mcs, mode, cbw, scp, nss);
+  }
+  return rate;
 }
 
 BOOL __MTLK_IFUNC
-mtlk_bitrate_params_supported (uint32 mode, uint32 cbw, uint32 scp, uint32 mcs, uint32 nss)
+mtlk_bitrate_hw_params_supported (uint32 mode, uint32 cbw, uint32 scp, uint32 mcs, uint32 nss)
 {
   return (MTLK_BITRATE_INVALID != _hw_rate_params_to_rate (mode, cbw, scp, mcs, nss));
+}
+
+BOOL __MTLK_IFUNC
+mtlk_bitrate_hw_params_supported_rate (uint32 *rate, uint32 mode, uint32 cbw, uint32 scp, uint32 mcs, uint32 nss)
+{
+  uint32 rate_value   = _hw_rate_params_to_rate (mode, cbw, scp, mcs, nss);
+  BOOL   is_supported = (MTLK_BITRATE_INVALID != rate_value);
+  if (is_supported && (rate != NULL)) {
+    *rate = rate_value;
+  }
+  return is_supported;
 }
 
 /* Input:   index - bit number of OperateRateSet or BasicRateSet

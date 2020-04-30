@@ -63,6 +63,9 @@ int __MTLK_IFUNC wave_core_set_nfrp_cfg  (mtlk_handle_t hcore, const void *data,
 int core_cfg_send_set_chan_by_msg(mtlk_txmm_msg_t *man_msg);
 int poll_client_req(mtlk_vap_handle_t vap_handle, sta_entry *sta, int *status);
 
+uint32 __MTLK_IFUNC wave_regd_code_to_regd_region(uint32 regd_code);
+uint32 __MTLK_IFUNC wave_core_cfg_get_regd_region(mtlk_core_t *core);
+
 uint32 __MTLK_IFUNC core_cfg_get_regd_code(mtlk_core_t *core);
 void   __MTLK_IFUNC core_cfg_country_code_get(mtlk_core_t *core, mtlk_country_code_t *country_code);
 int    __MTLK_IFUNC core_cfg_country_code_set(mtlk_core_t *core, const mtlk_country_code_t *country_code);
@@ -78,6 +81,7 @@ void core_cfg_set_tx_power_limit(mtlk_core_t *core, unsigned center_freq,
   enum chanWidth width, unsigned cf_primary,
   mtlk_country_code_t req_country_code, int power_level);
 
+int __MTLK_IFUNC core_cfg_wmm_param_set_by_params(mtlk_core_t *master_core, mtlk_core_t *core);
 int core_recovery_cfg_wmm_param_set(mtlk_core_t *core);
 
 int __MTLK_IFUNC core_cfg_set_four_addr_cfg (mtlk_handle_t hcore, const void *data, uint32 data_size);
@@ -135,6 +139,10 @@ int __MTLK_IFUNC mtlk_core_cfg_get_mcast_range_list_ipv6 (mtlk_handle_t hcore, c
 int __MTLK_IFUNC mtlk_core_get_unconnected_station (mtlk_handle_t hcore, const void* data, uint32 data_size);
 int __MTLK_IFUNC mtlk_core_cfg_set_max_mpdu_length (mtlk_handle_t hcore, const void *data, uint32 data_size);
 int __MTLK_IFUNC mtlk_core_cfg_get_max_mpdu_length (mtlk_handle_t hcore, const void *data, uint32 data_size);
+mtlk_error_t __MTLK_IFUNC wave_core_cfg_set_ap_retry_limit (mtlk_handle_t hcore, const void *data, uint32 data_size);
+mtlk_error_t __MTLK_IFUNC wave_core_cfg_get_ap_retry_limit (mtlk_handle_t hcore, const void *data, uint32 data_size);
+mtlk_error_t __MTLK_IFUNC wave_core_cfg_receive_retry_limit (mtlk_core_t *core, uint8 *retry_limit);
+mtlk_error_t __MTLK_IFUNC wave_core_cfg_send_retry_limit (mtlk_core_t *core, const uint8 retry_limit);
 int __MTLK_IFUNC mtlk_core_cfg_send_max_mpdu_length (mtlk_core_t *core, const uint32 max_mpdu_length);
 uint32 __MTLK_IFUNC mtlk_core_cfg_read_max_mpdu_length (mtlk_core_t *core);
 
@@ -189,7 +197,8 @@ int __MTLK_IFUNC mtlk_core_receive_admission_capacity (mtlk_core_t *core, uint32
 int __MTLK_IFUNC mtlk_core_cfg_send_fast_drop (mtlk_core_t *core, uint8 fast_drop);
 int __MTLK_IFUNC mtlk_core_cfg_set_fast_drop (mtlk_core_t *core, uint8 fast_drop);
 int __MTLK_IFUNC mtlk_core_receive_fast_drop (mtlk_core_t *core, uint8 *fast_drop);
-int __MTLK_IFUNC mtlk_core_send_erp_cfg (mtlk_core_t *core, mtlk_erp_cfg_t *erp_cfg);
+int __MTLK_IFUNC mtlk_core_coc_set_erp_mode (mtlk_handle_t hcore, const void* data, uint32 data_size);
+int __MTLK_IFUNC mtlk_core_coc_get_erp_mode (mtlk_handle_t hcore, const void* data, uint32 data_size);
 
 int wave_core_cfg_send_rcvry_msg(mtlk_handle_t hcore, const void *data, uint32 data_size);
 
@@ -210,6 +219,13 @@ int __MTLK_IFUNC wave_core_cfg_get_stations_stats_enabled (mtlk_handle_t hcore, 
 int __MTLK_IFUNC wave_core_cfg_set_stations_stats_enabled (mtlk_handle_t hcore, const void* data, uint32 data_size);
 
 int __MTLK_IFUNC wave_core_cfg_recover_cutoff_point (mtlk_core_t *core);
+
+int __MTLK_IFUNC _wave_core_cfg_set_rts_threshold (mtlk_core_t *core, uint32 rts_threshold);
+int __MTLK_IFUNC _wave_core_cfg_get_rts_threshold (mtlk_core_t *core, uint32 *rts_threshold);
+int __MTLK_IFUNC wave_core_set_rts_threshold (mtlk_handle_t hcore, const void* data, uint32 data_size);
+int __MTLK_IFUNC wave_core_get_rts_threshold (mtlk_handle_t hcore, const void* data, uint32 data_size);
+int __MTLK_IFUNC wave_core_cfg_recover_rts_threshold (mtlk_core_t *core);
+
 unsigned int __MTLK_IFUNC wave_core_cfg_get_nof_channels (mtlk_hw_band_e  hw_band);
 
 /* These 6 functions are required for further Recovery integration of Dynamic MU API */
@@ -230,4 +246,13 @@ int __MTLK_IFUNC wave_core_get_zwdfs_antenna (mtlk_handle_t hcore, const void* d
 int __MTLK_IFUNC mtlk_core_get_amsdu_num (mtlk_handle_t hcore, const void* data, uint32 data_size);
 
 int wave_core_he_operation_set(struct wireless_dev *wdev, const void *data, int total_len);
+
+int __MTLK_IFUNC mtlk_core_cfg_get_csa_deauth_tx_time(mtlk_handle_t hcore, const void *data, uint32 data_size);
+int __MTLK_IFUNC mtlk_core_cfg_set_csa_deauth_tx_time(mtlk_handle_t hcore, const void *data, uint32 data_size);
+
+mtlk_error_t __MTLK_IFUNC wave_core_cfg_notify_cac_started (mtlk_handle_t hcore, const void *data, uint32 data_size);
+mtlk_error_t __MTLK_IFUNC wave_core_cfg_notify_cac_finished (mtlk_handle_t hcore, const void *data, uint32 data_size);
+
+int wave_core_he_non_advertised_set(struct wireless_dev *wdev, const void *data, int total_len);
+int wave_core_set_he_debug_data(struct wireless_dev *wdev, const void *data, int total_len);
 #endif /*__CORE_CONFIG_H__*/

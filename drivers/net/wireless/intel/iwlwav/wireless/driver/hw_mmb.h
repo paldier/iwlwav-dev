@@ -356,6 +356,8 @@ void __MTLK_IFUNC mtlk_mmb_print_tx_bss_res_queue(mtlk_hw_t *hw);
 void __MTLK_IFUNC mtlk_mmb_print_tx_dat_ring_info(mtlk_hw_t *hw);
 void __MTLK_IFUNC mtlk_mmb_print_tx_bss_ring_info(mtlk_hw_t *hw);
 
+void __MTLK_IFUNC mtlk_mmb_clean_tx_bss_res_queue_for_vap (mtlk_hw_t *hw, uint8 radio_id, uint8 vap_id);
+
 #define   MTLK_IDEFS_OFF
 #include "mtlkidefs.h"
 
@@ -609,7 +611,7 @@ void __MTLK_IFUNC
 mtlk_hw_get_peer_rssi_snapshot_ack(const sta_entry *sta, rssiSnapshot_t *cli_rssi_ack);
 
 void __MTLK_IFUNC
-mtlk_hw_save_chan_statistics_info (mtlk_hw_t *hw, struct mtlk_chan_def *ccd, struct intel_vendor_channel_data *ch_data, BOOL ch_radar_noise);
+mtlk_hw_save_chan_statistics_info (mtlk_hw_t *hw, uint8 radio_id, struct intel_vendor_channel_data *ch_data, BOOL ch_radar_noise);
 
 BOOL __MTLK_IFUNC wave_hw_zwdfs_antenna_is_active (mtlk_hw_t *hw);
 

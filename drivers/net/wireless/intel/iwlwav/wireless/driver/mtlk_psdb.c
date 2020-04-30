@@ -162,7 +162,7 @@ static const _regd_country2domain_t country_regdcode_table[] =
     {"KM", REGD_CODE_ETSI     },
     {"KN", REGD_CODE_FCC      },
     {"KP", REGD_CODE_MKK      },
-    {"KR", REGD_CODE_MKK      },
+    {"KR", REGD_CODE_KOREA    },
     {"KW", REGD_CODE_ETSI     },
     {"KY", REGD_CODE_FCC      },
     {"KZ", REGD_CODE_ETSI     },

@@ -35,6 +35,7 @@ typedef struct {
 typedef struct {
   unsigned    max_vaps;
   unsigned    max_stas;
+  unsigned    master_vap_id;
 } wave_radio_limits_t;
 
 /* These are values for parameter "is_recovery" of
@@ -186,9 +187,12 @@ int wave_radio_radio_info_get(struct wiphy *wiphy, struct wireless_dev *wdev, co
 int wave_radio_antenna_set(wave_radio_t *radio, u32 tx_ant, u32 rx_ant);
 int wave_radio_antenna_get(wave_radio_t *radio, u32 *tx_ant, u32 *rx_ant);
 
+int wave_radio_rts_threshold_set(wave_radio_t *radio, u32 rts_threshold);
+
 /* WIFI HAL* API's */
 int wave_radio_get_associated_dev_stats(wave_radio_t *radio, struct net_device *ndev, const void *data, int data_len);
 int wave_radio_get_channel_stats(wave_radio_t *radio, struct net_device *ndev, const void *data, size_t data_len);
+int wave_radio_get_phy_channel_status(wave_radio_t *radio, struct net_device *ndev, const void *data, size_t data_len);
 int wave_radio_get_associated_dev_tid_stats(wave_radio_t *radio, struct net_device *ndev, const void *data, int data_len);
 int wave_radio_get_associated_dev_rate_info_rx_stats(wave_radio_t *radio, struct net_device *ndev, const void *data, int total_len);
 int wave_radio_get_associated_dev_rate_info_tx_stats(wave_radio_t *radio, struct net_device *ndev, const void *data, int total_len);
@@ -244,9 +248,11 @@ struct mtlk_chan_def* wave_radio_chandef_get(wave_radio_t *radio);
 int wave_radio_chan_switch_type_get(wave_radio_t *radio);
 void wave_radio_chan_switch_type_set(wave_radio_t *radio, int value);
 void wave_radio_chandef_copy(struct mtlk_chan_def *mcd, struct cfg80211_chan_def *chandef);
+int wave_radio_set_first_non_dfs_chandef (wave_radio_t * radio);
 
 UMI_HDK_CONFIG *wave_radio_hdkconfig_get(wave_radio_t *radio);
 mtlk_coc_t *wave_radio_coc_mgmt_get(wave_radio_t *radio);
+mtlk_erp_t *wave_radio_erp_mgmt_get(wave_radio_t *radio);
 void wave_radio_interfdet_set(wave_radio_t *radio, BOOL enable_flag);
 BOOL wave_radio_interfdet_get(wave_radio_t *radio);
 BOOL wave_radio_is_rate_80211b(uint8 bitrate);
@@ -256,6 +262,7 @@ void wave_radio_mode_set(wave_radio_t *radio, const uint32 radio_mode);
 void wave_radio_limits_set(wave_radio_descr_t *radio_descr, wave_radio_limits_t *radio_limits);
 unsigned wave_radio_max_stas_get(wave_radio_t *radio);
 unsigned wave_radio_max_vaps_get(wave_radio_t *radio);
+unsigned wave_radio_master_vap_id_get(wave_radio_t *radio);
 
 uint32 wave_radio_chandef_width_get(const struct cfg80211_chan_def *c);
 
@@ -352,3 +359,6 @@ wave_radio_get_zwdfs_ant_config (wave_radio_t *radio);
 void __MTLK_IFUNC
 wave_radio_set_zwdfs_ant_config (wave_radio_t *radio, const int mode);
 BOOL __MTLK_IFUNC wave_radio_get_is_zwdfs_radio (wave_radio_t *radio);
+
+void __MTLK_IFUNC wave_radio_set_cac_pending(wave_radio_t *radio, BOOL state);
+BOOL __MTLK_IFUNC wave_radio_get_cac_pending(wave_radio_t *radio);

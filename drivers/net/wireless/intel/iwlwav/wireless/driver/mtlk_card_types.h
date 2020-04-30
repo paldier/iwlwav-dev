@@ -121,6 +121,7 @@ static inline BOOL _chipid_is_gen6 (uint32 id)
 #define HW_VERS_600_EVB600_2G   0x46 /* 2.4 GHz */
 #define HW_VERS_600_85747_DB    0x47 /* Both    */
 #define HW_VERS_600_85743_DB    0x48 /* Both    */
+#define HW_VERS_600_GPB_DFS_DB  0x4A /* Both    */
 
 /*----------------------------------------------------------------------------*/
 

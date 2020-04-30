@@ -426,14 +426,15 @@ static int _wave_ieee80211_vendor_set_CoCPower(struct wiphy *wiphy, struct wirel
                 const void *data, int data_len)
 {
   ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
-  return set_int_params(wiphy, wdev, data, data_len, 1, 3, PRM_ID_COC_POWER_MODE);
+  return set_int_params(wiphy, wdev, data, data_len, 1, MTLK_COC_PW_MAX_CFG_PARAMS, PRM_ID_COC_POWER_MODE);
 }
 
 static int _wave_ieee80211_vendor_set_CoCAutoCfg(struct wiphy *wiphy, struct wireless_dev *wdev,
                 const void *data, int data_len)
 {
   ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
-  return set_int_params(wiphy, wdev, data, data_len, 10, 10, PRM_ID_COC_AUTO_PARAMS);
+  return set_int_params(wiphy, wdev, data, data_len,
+              MTLK_COC_AUTO_MIN_CFG_PARAMS, MTLK_COC_AUTO_MAX_CFG_PARAMS, PRM_ID_COC_AUTO_PARAMS);
 }
 
 static int _wave_ieee80211_vendor_set_PCoCPower(struct wiphy *wiphy, struct wireless_dev *wdev,
@@ -724,6 +725,13 @@ static int _wave_ieee80211_vendor_set_ScanExpTime(struct wiphy *wiphy, struct wi
 {
   ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
   return set_int_params(wiphy, wdev, data, data_len, 1, 1, PRM_ID_SCAN_EXP_TIME);
+}
+
+static int _wave_ieee80211_vendor_set_OutOfScanCaching(struct wiphy *wiphy, struct wireless_dev *wdev,
+                const void *data, int data_len)
+{
+  ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
+  return set_int_params(wiphy, wdev, data, data_len, 1, 1, PRM_ID_OUT_OF_SCAN_CACHING);
 }
 
 static int _wave_ieee80211_vendor_set_TaskletLimits(struct wiphy *wiphy, struct wireless_dev *wdev,
@@ -1035,7 +1043,7 @@ static int _wave_ieee80211_vendor_set_ErpSet(struct wiphy *wiphy, struct wireles
                 const void *data, int data_len)
 {
   ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
-  return set_int_params(wiphy, wdev, data, data_len, 4, 4, PRM_ID_ERP);
+  return set_int_params(wiphy, wdev, data, data_len, 10, 10, PRM_ID_ERP);
 }
 
 static int _wave_ieee80211_vendor_set_DmrConfig(struct wiphy *wiphy, struct wireless_dev *wdev,
@@ -1104,6 +1112,13 @@ static int _wave_cfg80211_vendor_set_he_mu_duration(struct wiphy *wiphy, struct 
                         WAVE_HE_MU_DURATION_CFG_SIZE, WAVE_HE_MU_DURATION_CFG_SIZE, PRM_ID_HE_MU_DURATION);
 }
 
+static int _wave_ieee80211_vendor_set_ap_retry_limit(struct wiphy *wiphy, struct wireless_dev *wdev,
+                const void *data, int data_len)
+{
+  ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
+  return set_int_params(wiphy, wdev, data, data_len, 1, 1, PRM_ID_AP_RETRY_LIMIT);
+}
+
 /* WIFI HAL API's*/
 static int _wave_cfg80211_vendor_get_associated_dev_stats (struct wiphy *wiphy,
   struct wireless_dev *wdev, const void *data, int data_len)
@@ -1127,6 +1142,14 @@ static int _wave_cfg80211_vendor_get_channel_stats (struct wiphy *wiphy,
   struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
   wave_radio_t *radio = wv_ieee80211_hw_radio_get(hw);
   return wave_radio_get_channel_stats(radio, wdev->netdev, data, data_len);
+}
+
+static int _wave_cfg80211_vendor_get_phy_chan_status (struct wiphy *wiphy, struct wireless_dev *wdev,
+                                                      const void *data, int data_len)
+{
+  struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+  wave_radio_t *radio = wv_ieee80211_hw_radio_get(hw);
+  return wave_radio_get_phy_channel_status(radio, wdev->netdev, data, data_len);
 }
 
 static int _wave_cfg80211_vendor_get_associated_dev_rate_info_rx_stats (struct wiphy *wiphy, struct wireless_dev *wdev,
@@ -1233,21 +1256,6 @@ static int _wave_cfg80211_vendor_get_tr181_peer_stats (struct wiphy *wiphy,
   struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
   wave_radio_t *radio = wv_ieee80211_hw_radio_get(hw);
   return wave_radio_get_tr181_peer_statistics(radio, wdev->netdev, data, data_len);
-}
-
-static int _wave_ieee80211_vendor_hapd_set_disable_master_vap(struct wiphy *wiphy, struct wireless_dev *wdev,
-                const void *data, int data_len)
-{
-  struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
-  wave_radio_t *radio = wv_ieee80211_hw_radio_get(hw);
-
-  ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
-  if (data_len != sizeof (int)){
-    ELOG_V("_wave_ieee80211_vendor_set_disable_master_vap, incorrect data length");
-    return _mtlk_df_mtlk_to_linux_error_code(MTLK_ERR_PARAMS);
-  }
-  WAVE_RADIO_PDB_SET_INT(radio, PARAM_DB_RADIO_DISABLE_MASTER_VAP, (*(int *)data));
-  return _mtlk_df_mtlk_to_linux_error_code(MTLK_ERR_OK);
 }
 
 static int _wave_ieee80211_vendor_set_rts_rate(struct wiphy *wiphy, struct wireless_dev *wdev,
@@ -1621,14 +1629,21 @@ static int _wave_ieee80211_vendor_get_CoCPower(struct wiphy *wiphy, struct wirel
                 const void *data, int data_len)
 {
   ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
-  return get_int_params(wiphy, wdev, data, data_len, PRM_ID_COC_POWER_MODE, 3);
+  return get_int_params(wiphy, wdev, data, data_len, PRM_ID_COC_POWER_MODE, MTLK_COC_PW_MAX_CFG_PARAMS);
 }
 
 static int _wave_ieee80211_vendor_get_CoCAutoCfg(struct wiphy *wiphy, struct wireless_dev *wdev,
                 const void *data, int data_len)
 {
   ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
-  return get_int_params(wiphy, wdev, data, data_len, PRM_ID_COC_AUTO_PARAMS, 10);
+  return get_int_params(wiphy, wdev, data, data_len, PRM_ID_COC_AUTO_PARAMS, MTLK_COC_AUTO_MAX_CFG_PARAMS);
+}
+
+static int _wave_ieee80211_vendor_get_ErpCfg(struct wiphy *wiphy, struct wireless_dev *wdev,
+                const void *data, int data_len)
+{
+  ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
+  return get_int_params(wiphy, wdev, data, data_len, PRM_ID_ERP, 10);
 }
 
 static int _wave_ieee80211_vendor_get_PCoCPower(struct wiphy *wiphy, struct wireless_dev *wdev,
@@ -1750,6 +1765,13 @@ static int _wave_ieee80211_vendor_get_ScanExpTime(struct wiphy *wiphy, struct wi
 {
   ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
   return get_int_params(wiphy, wdev, data, data_len, PRM_ID_SCAN_EXP_TIME, 1);
+}
+
+static int _wave_ieee80211_vendor_get_OutOfScanCaching(struct wiphy *wiphy, struct wireless_dev *wdev,
+                const void *data, int data_len)
+{
+  ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
+  return get_int_params(wiphy, wdev, data, data_len, PRM_ID_OUT_OF_SCAN_CACHING, 1);
 }
 
 static int _wave_ieee80211_vendor_get_GenlFamilyId(struct wiphy *wiphy, struct wireless_dev *wdev,
@@ -2086,6 +2108,13 @@ int _wave_ieee80211_vendor_get_he_mu_operation(struct wiphy *wiphy, struct wirel
   return get_int_params(wiphy, wdev, data, data_len, PRM_ID_HE_MU_OPERATION, 1);
 }
 
+static int _wave_ieee80211_vendor_get_ap_retry_limit(struct wiphy *wiphy, struct wireless_dev *wdev,
+                const void *data, int data_len)
+{
+  ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
+  return get_int_params(wiphy, wdev, data, data_len, PRM_ID_AP_RETRY_LIMIT, 1);
+}
+
 static int _wave_ieee80211_vendor_hapd_set_mbssid_vap(struct wiphy *wiphy, struct wireless_dev *wdev,
                                 const void *data, int data_len)
 {
@@ -2176,6 +2205,41 @@ end_0: /* w/o error-code conversion */
 end_1:
   return _mtlk_df_mtlk_to_linux_error_code(res);
 }
+
+static int _wave_cfg80211_vendor_store_chan_switch_deauth_params(struct wiphy *wiphy, struct wireless_dev *wdev,
+                                const void *data, int data_len)
+{
+  mtlk_df_user_t *df_user = NULL;
+  mtlk_error_t res = MTLK_ERR_OK;
+  mtlk_clpb_t *clpb = NULL;
+  struct intel_vendor_channel_switch_cfg *vendor_cs_cfg = (struct intel_vendor_channel_switch_cfg*)data;
+
+  ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
+
+  df_user = mtlk_df_user_from_wdev(wdev);
+  MTLK_CHECK_DF_USER(df_user);
+
+  if (NULL == vendor_cs_cfg) {
+    ELOG_V("Vendor CSA deauth data data is NULL");
+    res = MTLK_ERR_PARAMS;
+    goto end;
+  }
+  if (data_len != sizeof(*vendor_cs_cfg)) {
+    ELOG_DD("Vendor CSA deauth data is not in expected size, passed: %d, expected= %d", data_len, sizeof(*vendor_cs_cfg));
+    res = MTLK_ERR_PARAMS;
+    goto end;
+  }
+
+  /* Invoke core to process the message further */
+  res = _mtlk_df_user_invoke_core(mtlk_df_user_get_df(df_user),
+          WAVE_CORE_REQ_SET_CHAN_SWITCH_DEAUTH_PARAMS, &clpb, vendor_cs_cfg, data_len);
+  res = _mtlk_df_user_process_core_retval(res, clpb,
+          WAVE_CORE_REQ_SET_CHAN_SWITCH_DEAUTH_PARAMS, FALSE);
+
+end:
+  return _mtlk_df_mtlk_to_linux_error_code(res);
+}
+
 
 static int _wave_ieee80211_vendor_hapd_send_initial_data(struct wiphy *wiphy, struct wireless_dev *wdev,
                 const void *data, int data_len)
@@ -2587,6 +2651,13 @@ static int _wave_ieee80211_vendor_get_stations_statistics (struct wiphy *wiphy, 
   return get_int_params(wiphy, wdev, data, data_len, PRM_ID_STATIONS_STATS, 1);
 }
 
+static int _wave_ieee80211_vendor_get_rts_threshold (struct wiphy *wiphy, struct wireless_dev *wdev,
+                const void *data, int data_len)
+{
+  ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
+  return get_int_params(wiphy, wdev, data, data_len, PRM_ID_RTS_THRESHOLD, 1);
+}
+
 static int _wave_ieee80211_vendor_hapd_check_4addr_mode(struct wiphy *wiphy, struct wireless_dev *wdev,
                 const void *data, int data_len)
 {
@@ -2724,6 +2795,18 @@ int wave_cfg80211_vendor_hapd_get_he_non_advertised(struct wiphy *wiphy,
   return wave_radio_he_non_advertised_get(wv_ieee80211_hw_radio_get(wiphy_priv(wiphy)), wiphy, wdev);
 }
 
+int wave_cfg80211_vendor_hapd_set_he_debug_data(struct wiphy *wiphy,
+  struct wireless_dev *wdev, const void *data, int data_len)
+{
+  return wave_core_set_he_debug_data(wdev, data, data_len);
+}
+
+int wave_cfg80211_vendor_hapd_set_he_non_advertised(struct wiphy *wiphy,
+  struct wireless_dev *wdev, const void *data, int data_len)
+{
+  return wave_core_he_non_advertised_set(wdev, data, data_len);
+}
+
 static int _wave_cfg80211_vendor_get_phy_inband_power(struct wiphy *wiphy, struct wireless_dev *wdev,
                 const void *data, int data_len)
 {
@@ -2796,7 +2879,6 @@ wiphy_vendor_command _wave_mac80211_vendor_commands[] = {
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_BSS_LOAD,         _wave_ieee80211_vendor_hapd_set_bss_load, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV_UP),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_MESH_MODE,        _wave_ieee80211_vendor_hapd_set_mesh_mode, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV_UP),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_CHECK_4ADDR_MODE,     _wave_ieee80211_vendor_hapd_check_4addr_mode, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV_UP),
-  VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_DISABLE_MASTER_VAP, _wave_ieee80211_vendor_hapd_set_disable_master_vap, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_SOFTBLOCK_THRESHOLDS, _wave_ieee80211_vendor_hapd_set_softblock_threshold, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV_UP),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_SOFTBLOCK_DISABLE, _wave_ieee80211_vendor_hapd_set_disable_softblock, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV_UP),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_MBSSID_VAP, _wave_ieee80211_vendor_hapd_set_mbssid_vap, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
@@ -2924,6 +3006,9 @@ wiphy_vendor_command _wave_mac80211_vendor_commands[] = {
 
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_SCAN_EXP_TIME, _wave_ieee80211_vendor_set_ScanExpTime, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_SCAN_EXP_TIME, _wave_ieee80211_vendor_get_ScanExpTime, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
+
+  VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_OUT_OF_SCAN_CACHING, _wave_ieee80211_vendor_set_OutOfScanCaching, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
+  VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_OUT_OF_SCAN_CACHING, _wave_ieee80211_vendor_get_OutOfScanCaching, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
 
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_GENL_FAMILY_ID, _wave_ieee80211_vendor_get_GenlFamilyId, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
 
@@ -3080,6 +3165,8 @@ wiphy_vendor_command _wave_mac80211_vendor_commands[] = {
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_ZWDFS_ANT, _wave_cfg80211_vendor_set_zwdfs_ant, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_ZWDFS_ANT, _wave_cfg80211_vendor_get_zwdfs_ant, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
 
+  VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_RTS_THRESHOLD, _wave_ieee80211_vendor_get_rts_threshold, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
+
 /*TODO IWLWAV statistics*/
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_ASSOCIATED_DEV_RATE_INFO_RX_STATS, _wave_cfg80211_vendor_get_associated_dev_rate_info_rx_stats, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_ASSOCIATED_DEV_RATE_INFO_TX_STATS, _wave_cfg80211_vendor_get_associated_dev_rate_info_tx_stats, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
@@ -3087,6 +3174,7 @@ wiphy_vendor_command _wave_mac80211_vendor_commands[] = {
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_STATS_POLL_PERIOD, _wave_cfg80211_vendor_get_stats_poll_period, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_ASSOCIATED_DEV_STATS, _wave_cfg80211_vendor_get_associated_dev_stats, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_CHANNEL_STATS, _wave_cfg80211_vendor_get_channel_stats, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
+  VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_PHY_CHAN_STATUS, _wave_cfg80211_vendor_get_phy_chan_status, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_ASSOCIATED_DEV_TID_STATS, _wave_cfg80211_vendor_get_associated_dev_tid_stats, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_PEER_LIST, _wave_cfg80211_vendor_get_peer_list, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_PEER_FLOW_STATUS, _wave_cfg80211_vendor_get_peer_flow_status, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
@@ -3109,6 +3197,8 @@ wiphy_vendor_command _wave_mac80211_vendor_commands[] = {
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_HE_MU_DURATION, _wave_cfg80211_vendor_set_he_mu_duration, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_HE_MU_DURATION, _wave_cfg80211_vendor_get_he_mu_duration, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_HE_NON_ADVERTISED, wave_cfg80211_vendor_hapd_get_he_non_advertised, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV_UP),
+  VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_HE_NON_ADVERTISED, wave_cfg80211_vendor_hapd_set_he_non_advertised, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV_UP),
+  VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_HE_DEBUG_DATA, wave_cfg80211_vendor_hapd_set_he_debug_data, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV_UP),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_DEV_DIAG_RESULT2, _wave_cfg80211_vendor_get_dev_diag_result2, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV_UP),
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_DEV_DIAG_RESULT3, _wave_cfg80211_vendor_get_dev_diag_result3, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV_UP),
 
@@ -3117,6 +3207,11 @@ wiphy_vendor_command _wave_mac80211_vendor_commands[] = {
 
 
   VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_PHY_INBAND_POWER, _wave_cfg80211_vendor_get_phy_inband_power, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
+  VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_ERP_CFG , _wave_ieee80211_vendor_get_ErpCfg, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
+  VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_SET_AP_RETRY_LIMIT, _wave_ieee80211_vendor_set_ap_retry_limit, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
+  VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_AP_RETRY_LIMIT, _wave_ieee80211_vendor_get_ap_retry_limit, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
+  VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_GET_ERP_CFG , _wave_ieee80211_vendor_get_ErpCfg, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
+  VENDOR_CMD(LTQ_NL80211_VENDOR_SUBCMD_CHANNEL_SWITCH_DEAUTH_CFG, _wave_cfg80211_vendor_store_chan_switch_deauth_params, WIPHY_VENDOR_CMD_NEED_WDEV_NETDEV),
 };
 
 void _wave_mac80211_register_vendor_cmds(struct wiphy *wiphy)

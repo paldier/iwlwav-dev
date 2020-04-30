@@ -1146,19 +1146,6 @@ _wave_vap_get_mac80211 (mtlk_vap_handle_t vap_handle)
   return wv_mac80211;
 }
 
-BOOL
-wave_vap_is_dummy (mtlk_vap_handle_t vap_handle)
-{
-  struct _wv_mac80211_t *wv_mac80211  = _wave_vap_get_mac80211(vap_handle);
-  if (NULL == wv_mac80211->vif_array) {
-    return TRUE;
-  }
-  if(mtlk_core_get_hw_state(mtlk_vap_get_core(vap_handle)) != MTLK_HW_STATE_READY){
-    return TRUE;
-  }
-  return FALSE;
-}
-
 static struct wv_vif_priv *
 _wave_vap_get_vif_priv (mtlk_vap_handle_t vap_handle)
 {
@@ -1388,6 +1375,23 @@ _mtlk_nl_to_mtlk_sbdfs_bw (enum nl80211_sb_dfs_bw bw)
   }
 }
 
+static mtlk_error_t
+_wv_activate_vif (mtlk_df_user_t *df_user)
+{
+  mtlk_clpb_t *clpb = NULL;
+  mtlk_error_t res = MTLK_ERR_OK;
+
+  /* Set security is currently not done, using open mode for now */
+
+  ILOG2_V("Switching to serializer to activate the Vif");
+  res = _mtlk_df_user_invoke_core(mtlk_df_user_get_df(df_user),
+      WAVE_CORE_REQ_ACTIVATE_OPEN, &clpb, NULL, 0);
+  res = _mtlk_df_user_process_core_retval(res, clpb,
+      WAVE_CORE_REQ_ACTIVATE_OPEN, TRUE);
+
+  return res;
+}
+
 static int
 _wv_ieee80211_op_config (struct ieee80211_hw *hw, u32 changed)
 {
@@ -1427,7 +1431,24 @@ _wv_ieee80211_op_config (struct ieee80211_hw *hw, u32 changed)
   }
 
   if (changed & IEEE80211_CONF_CHANGE_IDLE) {
-    ILOG1_S("%s: Interface idle state has changed", wiphy_name(hw->wiphy));
+    int idle = !!(conf->flags & IEEE80211_CONF_IDLE);
+    ILOG1_SD("%s: Interface idle state has changed to %d", wiphy_name(hw->wiphy), idle);
+    if (master_core->is_stopped && !idle) {
+      res = wave_radio_abort_and_prevent_scan(mac80211->radio);
+      if (MTLK_ERR_OK != res)
+        goto end;
+      res = _wv_activate_vif(mtlk_df_get_user(master_df));
+      if (MTLK_ERR_OK != res){
+        wave_radio_allow_or_resume_scan(mac80211->radio);
+        goto end;
+      }
+      res = wave_radio_allow_or_resume_scan(mac80211->radio);
+      if (MTLK_ERR_OK != res)
+        goto end;
+    } else if (master_core->is_stopped && idle) {
+      res = MTLK_ERR_OK;
+      goto end;
+    }
   }
 
   if (changed & IEEE80211_CONF_CHANGE_POWER)
@@ -1501,7 +1522,8 @@ _wv_ieee80211_op_config (struct ieee80211_hw *hw, u32 changed)
              wiphy_name(hw->wiphy));
   }
 
-  return LINUX_ERR_OK;
+end:
+  return _mtlk_df_mtlk_to_linux_error_code(res);
 }
 
 /* AP interface initiated channel switch has been completed */
@@ -2038,22 +2060,6 @@ wv_ieee80211_peer_ap_address(struct ieee80211_vif *vif)
   return wv_iface_inf->peer_ap_addr;
 }
 
-static int wv_activate_vif(mtlk_df_user_t *df_user)
-{
-  int res;
-
-  mtlk_clpb_t *clpb = NULL;
-
-  /* Set security is currently not done, using open mode for now */
-
-  ILOG2_V("Switching to serializer to activate the Vif");
-  res = _mtlk_df_user_invoke_core(mtlk_df_user_get_df(df_user),
-      WAVE_CORE_REQ_ACTIVATE_OPEN, &clpb, NULL, 0);
-  res = _mtlk_df_user_process_core_retval(res, clpb,
-      WAVE_CORE_REQ_ACTIVATE_OPEN, TRUE);
-  return _mtlk_df_mtlk_to_linux_error_code(res);
-}
-
 /* Saves the mac addr from vif into pdb
  * Must be called after vap init & before vap activate
  */
@@ -2127,7 +2133,6 @@ static int _wv_ieee80211_op_add_interface (struct ieee80211_hw *hw, struct ieee8
   mtlk_df_user_t **clpb_data;
   uint32 clpb_data_size;
   wv_mac80211_t *mac80211;
-  mtlk_vap_info_internal_t *_info;
   mtlk_df_t      *master_df;
   mtlk_core_t *master_core;
   struct net_device *netdev_p = NULL;
@@ -2228,8 +2233,7 @@ static int _wv_ieee80211_op_add_interface (struct ieee80211_hw *hw, struct ieee8
     MTLK_CLPB_END;
   }
 
-  _info = (mtlk_vap_info_internal_t *)mtlk_df_get_vap_handle(mtlk_df_user_get_df(wv_iface_inf->df_user));
-  wv_iface_inf->vap_index = _info->id;
+  wv_iface_inf->vap_index = mtlk_vap_get_id(mtlk_df_get_vap_handle(mtlk_df_user_get_df(wv_iface_inf->df_user)));
   wv_iface_inf->latest_rx_and_tx_packets = 0;
   wv_iface_inf->ndp_counter = 0;
 
@@ -2250,10 +2254,16 @@ static int _wv_ieee80211_op_add_interface (struct ieee80211_hw *hw, struct ieee8
     * channel settings*/
   }
 
+  if (vif->type != NL80211_IFTYPE_STATION) {
+    /* AP vaps will do ADD_VAP on start_ap() callback for slaves,
+     * and at op_config() or scan_do_scan() for master vap */
+    goto end;
+  }
+
   res = wave_radio_abort_and_prevent_scan(radio);
   if (MTLK_ERR_OK != res)
     goto end;
-  res = wv_activate_vif(wv_iface_inf->df_user);
+  res = _wv_activate_vif(wv_iface_inf->df_user);
   if (MTLK_ERR_OK != res){
     wave_radio_allow_or_resume_scan(radio);
     goto end;
@@ -2390,6 +2400,477 @@ static void _wv_ieee80211_op_configure_filter (struct ieee80211_hw *hw,
   * frames up the stack
   */
   *total_flags &= FIF_OTHER_BSS | FIF_ALLMULTI;
+}
+
+static void wv_negotiate_sta_he_mcs_nss(struct ieee80211_he_cap_elem *sta_caps,
+    struct ieee80211_he_mcs_nss_supp *sta_he_mcs_nss,
+    const struct ieee80211_he_mcs_nss_supp *advertised_our_caps,
+    struct ieee80211_he_mcs_nss_supp *output_caps)
+{
+  get_he_mcs_nss(advertised_our_caps->rx_mcs_80, sta_he_mcs_nss->tx_mcs_80,
+                 &output_caps->tx_mcs_80);
+  get_he_mcs_nss(advertised_our_caps->tx_mcs_80, sta_he_mcs_nss->rx_mcs_80,
+                 &output_caps->rx_mcs_80);
+
+  if (sta_caps->phy_cap_info[0] &
+      IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_160MHZ_IN_5G) {
+    get_he_mcs_nss(advertised_our_caps->rx_mcs_160, sta_he_mcs_nss->tx_mcs_160,
+                   &output_caps->tx_mcs_160);
+    get_he_mcs_nss(advertised_our_caps->tx_mcs_160, sta_he_mcs_nss->rx_mcs_160,
+                   &output_caps->rx_mcs_160);
+  }
+
+  if (sta_caps->phy_cap_info[0] &
+      IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_80PLUS80_MHZ_IN_5G) {
+    get_he_mcs_nss(advertised_our_caps->rx_mcs_80p80, sta_he_mcs_nss->tx_mcs_80p80,
+                   &output_caps->tx_mcs_80p80);
+    get_he_mcs_nss(advertised_our_caps->tx_mcs_80p80, sta_he_mcs_nss->rx_mcs_80p80,
+                   &output_caps->rx_mcs_80p80);
+  }
+}
+
+static void wv_negotiate_sta_he_mac_phy_capab(struct ieee80211_he_cap_elem *sta_caps,
+    const struct ieee80211_he_cap_elem *advertised_our_caps,
+    const struct ieee80211_he_cap_elem *non_advertised_our_caps,
+    struct ieee80211_he_cap_elem *output_caps)
+{
+  u8 cap = 0, min = 0;
+
+  output_caps->mac_cap_info[0] |= min_he_cap(sta_caps->mac_cap_info[0],
+          non_advertised_our_caps->mac_cap_info[0],
+          IEEE80211_HE_MAC_CAP0_HTC_HE);
+  output_caps->mac_cap_info[0] |= min_he_cap(sta_caps->mac_cap_info[0],
+          advertised_our_caps->mac_cap_info[0],
+          IEEE80211_HE_MAC_CAP0_TWT_REQ);
+  output_caps->mac_cap_info[0] |= min_he_cap(sta_caps->mac_cap_info[0],
+          advertised_our_caps->mac_cap_info[0],
+          IEEE80211_HE_MAC_CAP0_TWT_RES);
+  output_caps->mac_cap_info[0] |= min_he_cap(sta_caps->mac_cap_info[0],
+          non_advertised_our_caps->mac_cap_info[0],
+          IEEE80211_HE_MAC_CAP0_DYNAMIC_FRAG_MASK);
+  output_caps->mac_cap_info[0] |= min_he_cap(sta_caps->mac_cap_info[0],
+          non_advertised_our_caps->mac_cap_info[0],
+          IEEE80211_HE_MAC_CAP0_MAX_NUM_FRAG_MSDU_MASK);
+
+  output_caps->mac_cap_info[1] |= min_he_cap(sta_caps->mac_cap_info[1],
+          non_advertised_our_caps->mac_cap_info[1],
+          IEEE80211_HE_MAC_CAP1_MIN_FRAG_SIZE_MASK);
+  output_caps->mac_cap_info[1] |= min_he_cap(sta_caps->mac_cap_info[1],
+          non_advertised_our_caps->mac_cap_info[1],
+          IEEE80211_HE_MAC_CAP1_TF_MAC_PAD_DUR_MASK);
+  cap |= get_he_cap(advertised_our_caps->mac_cap_info[4],
+                    IEEE80211_HE_MAC_CAP4_MULTI_TID_AGG_TX_QOS_B39);
+  cap |= (get_he_cap(advertised_our_caps->mac_cap_info[5],
+                     (IEEE80211_HE_MAC_CAP5_MULTI_TID_AGG_TX_QOS_B40 |
+                      IEEE80211_HE_MAC_CAP5_MULTI_TID_AGG_TX_QOS_B41)) << 1);
+  min = MIN(cap, get_he_cap(sta_caps->mac_cap_info[1],
+                            IEEE80211_HE_MAC_CAP1_MULTI_TID_AGG_RX_QOS_MASK));
+  output_caps->mac_cap_info[1] |= set_he_cap(min,
+          IEEE80211_HE_MAC_CAP1_MULTI_TID_AGG_RX_QOS_MASK);
+
+  output_caps->mac_cap_info[4] |= set_he_cap(cap,
+          IEEE80211_HE_MAC_CAP4_MULTI_TID_AGG_TX_QOS_B39);
+  output_caps->mac_cap_info[5] |= set_he_cap((cap >> 1),
+          (IEEE80211_HE_MAC_CAP5_MULTI_TID_AGG_TX_QOS_B40 |
+           IEEE80211_HE_MAC_CAP5_MULTI_TID_AGG_TX_QOS_B41));
+
+  if (output_caps->mac_cap_info[0] & IEEE80211_HE_MAC_CAP0_HTC_HE) {
+    output_caps->mac_cap_info[1] |= min_he_cap(sta_caps->mac_cap_info[1],
+            advertised_our_caps->mac_cap_info[1],
+            IEEE80211_HE_MAC_CAP1_LINK_ADAPTATION);
+    output_caps->mac_cap_info[2] |= min_he_cap(sta_caps->mac_cap_info[2],
+            advertised_our_caps->mac_cap_info[2],
+            IEEE80211_HE_MAC_CAP2_LINK_ADAPTATION);
+    output_caps->mac_cap_info[2] |= min_he_cap(sta_caps->mac_cap_info[2],
+            advertised_our_caps->mac_cap_info[2], IEEE80211_HE_MAC_CAP2_BSR);
+    output_caps->mac_cap_info[3] |= min_he_cap(sta_caps->mac_cap_info[3],
+            non_advertised_our_caps->mac_cap_info[3],
+            IEEE80211_HE_MAC_CAP3_OMI_CONTROL);
+    output_caps->mac_cap_info[2] |= min_he_cap(sta_caps->mac_cap_info[2],
+            non_advertised_our_caps->mac_cap_info[2], IEEE80211_HE_MAC_CAP2_TRS);
+  }
+  output_caps->mac_cap_info[2] |= min_he_cap(sta_caps->mac_cap_info[2],
+          non_advertised_our_caps->mac_cap_info[2],
+          IEEE80211_HE_MAC_CAP2_ALL_ACK);
+  output_caps->mac_cap_info[2] |= min_he_cap(sta_caps->mac_cap_info[2],
+          advertised_our_caps->mac_cap_info[2],
+          IEEE80211_HE_MAC_CAP2_BCAST_TWT);
+  output_caps->mac_cap_info[2] |= min_he_cap(sta_caps->mac_cap_info[2],
+          non_advertised_our_caps->mac_cap_info[2],
+          IEEE80211_HE_MAC_CAP2_32BIT_BA_BITMAP);
+  output_caps->mac_cap_info[2] |= min_he_cap(sta_caps->mac_cap_info[2],
+          advertised_our_caps->mac_cap_info[2],
+          IEEE80211_HE_MAC_CAP2_MU_CASCADING);
+  output_caps->mac_cap_info[2] |= min_he_cap(sta_caps->mac_cap_info[2],
+          non_advertised_our_caps->mac_cap_info[2],
+          IEEE80211_HE_MAC_CAP2_ACK_EN);
+
+  output_caps->mac_cap_info[3] |= min_he_cap(sta_caps->mac_cap_info[3],
+          advertised_our_caps->mac_cap_info[3],
+          IEEE80211_HE_MAC_CAP3_OFDMA_RA);
+  output_caps->mac_cap_info[3] |= min_he_cap(sta_caps->mac_cap_info[3],
+          non_advertised_our_caps->mac_cap_info[3],
+          IEEE80211_HE_MAC_CAP3_MAX_AMPDU_LEN_EXP_MASK);
+  output_caps->mac_cap_info[3] |= min_he_cap(sta_caps->mac_cap_info[3],
+          non_advertised_our_caps->mac_cap_info[3],
+          IEEE80211_HE_MAC_CAP3_AMSDU_FRAG);
+  output_caps->mac_cap_info[3] |= min_he_cap(sta_caps->mac_cap_info[3],
+          non_advertised_our_caps->mac_cap_info[3],
+          IEEE80211_HE_MAC_CAP3_FLEX_TWT_SCHED);
+  output_caps->mac_cap_info[3] |= min_he_cap(sta_caps->mac_cap_info[3],
+          non_advertised_our_caps->mac_cap_info[3],
+          IEEE80211_HE_MAC_CAP3_RX_CTRL_FRAME_TO_MULTIBSS);
+
+  output_caps->mac_cap_info[4] |= min_he_cap(sta_caps->mac_cap_info[4],
+          non_advertised_our_caps->mac_cap_info[4],
+          IEEE80211_HE_MAC_CAP4_BSRP_BQRP_A_MPDU_AGG);
+  output_caps->mac_cap_info[4] |= min_he_cap(sta_caps->mac_cap_info[4],
+          advertised_our_caps->mac_cap_info[4], IEEE80211_HE_MAC_CAP4_QTP);
+  output_caps->mac_cap_info[4] |= min_he_cap(sta_caps->mac_cap_info[4],
+          advertised_our_caps->mac_cap_info[4], IEEE80211_HE_MAC_CAP4_SRP_RESP);
+  output_caps->mac_cap_info[4] |= min_he_cap(sta_caps->mac_cap_info[4],
+          advertised_our_caps->mac_cap_info[4], IEEE80211_HE_MAC_CAP4_NDP_FB_REP);
+  output_caps->mac_cap_info[4] |= min_he_cap(sta_caps->mac_cap_info[4],
+          advertised_our_caps->mac_cap_info[4], IEEE80211_HE_MAC_CAP4_OPS);
+  output_caps->mac_cap_info[4] |= min_he_cap(sta_caps->mac_cap_info[4],
+          non_advertised_our_caps->mac_cap_info[4],
+          IEEE80211_HE_MAC_CAP4_AMDSU_IN_AMPDU);
+
+  output_caps->mac_cap_info[5] |= min_he_cap(sta_caps->mac_cap_info[5],
+          advertised_our_caps->mac_cap_info[5],
+          IEEE80211_HE_MAC_CAP5_SUBCHAN_SELECVITE_TRANSMISSION);
+  output_caps->mac_cap_info[5] |= min_he_cap(sta_caps->mac_cap_info[5],
+          non_advertised_our_caps->mac_cap_info[5],
+          IEEE80211_HE_MAC_CAP5_UL_2x996_TONE_RU);
+  output_caps->mac_cap_info[5] |= min_he_cap(sta_caps->mac_cap_info[5],
+          advertised_our_caps->mac_cap_info[5],
+          IEEE80211_HE_MAC_CAP5_OM_CTRL_UL_MU_DATA_DIS_RX);
+
+  output_caps->phy_cap_info[0] = sta_caps->phy_cap_info[0];
+  output_caps->phy_cap_info[1] |= min_he_cap(sta_caps->phy_cap_info[1],
+	  non_advertised_our_caps->phy_cap_info[1],
+          IEEE80211_HE_PHY_CAP1_PREAMBLE_PUNC_RX_MASK);
+  output_caps->phy_cap_info[1] |= min_he_cap(sta_caps->phy_cap_info[1],
+          non_advertised_our_caps->phy_cap_info[1],
+          IEEE80211_HE_PHY_CAP1_DEVICE_CLASS_A);
+  output_caps->phy_cap_info[1] |= min_he_cap(sta_caps->phy_cap_info[1],
+          advertised_our_caps->phy_cap_info[1],
+          IEEE80211_HE_PHY_CAP1_LDPC_CODING_IN_PAYLOAD);
+  output_caps->phy_cap_info[1] |= min_he_cap(sta_caps->phy_cap_info[1],
+          non_advertised_our_caps->phy_cap_info[1],
+          IEEE80211_HE_PHY_CAP1_HE_LTF_AND_GI_FOR_HE_PPDUS_0_8US);
+
+  if (sta_caps->phy_cap_info[4] & IEEE80211_HE_PHY_CAP4_SU_BEAMFORMEE) {
+    output_caps->phy_cap_info[7] |= min_he_cap(sta_caps->phy_cap_info[7],
+            advertised_our_caps->phy_cap_info[7], IEEE80211_HE_PHY_CAP7_MAX_NC_MASK);
+    output_caps->phy_cap_info[2] |= min_he_cap(sta_caps->phy_cap_info[2],
+            non_advertised_our_caps->phy_cap_info[2],
+            IEEE80211_HE_PHY_CAP2_NDP_4x_LTF_AND_3_2US);
+    min = MIN(get_he_cap(sta_caps->phy_cap_info[4],
+                         IEEE80211_HE_PHY_CAP4_BEAMFORMEE_MAX_STS_UNDER_80MHZ_MASK),
+              get_he_cap(advertised_our_caps->phy_cap_info[5],
+                         IEEE80211_HE_PHY_CAP5_BEAMFORMEE_NUM_SND_DIM_UNDER_80MHZ_MASK));
+    output_caps->phy_cap_info[4] |= set_he_cap(min,
+            IEEE80211_HE_PHY_CAP4_BEAMFORMEE_MAX_STS_UNDER_80MHZ_MASK);
+    min = MIN(get_he_cap(sta_caps->phy_cap_info[4],
+                         IEEE80211_HE_PHY_CAP4_BEAMFORMEE_MAX_STS_ABOVE_80MHZ_MASK),
+              get_he_cap(advertised_our_caps->phy_cap_info[5],
+                         IEEE80211_HE_PHY_CAP5_BEAMFORMEE_NUM_SND_DIM_ABOVE_80MHZ_MASK));
+    output_caps->phy_cap_info[4] |= set_he_cap(min,
+            IEEE80211_HE_PHY_CAP4_BEAMFORMEE_MAX_STS_ABOVE_80MHZ_MASK);
+  }
+
+  if (sta_caps->phy_cap_info[2] & IEEE80211_HE_PHY_CAP2_DOPPLER_TX ||
+      sta_caps->phy_cap_info[2] & IEEE80211_HE_PHY_CAP2_DOPPLER_RX) {
+    output_caps->phy_cap_info[1] |= min_he_cap(sta_caps->phy_cap_info[1],
+            advertised_our_caps->phy_cap_info[1],
+            IEEE80211_HE_PHY_CAP1_MIDAMBLE_RX_TX_MAX_NSTS);
+    output_caps->phy_cap_info[2] |= min_he_cap(sta_caps->phy_cap_info[2],
+            advertised_our_caps->phy_cap_info[2],
+            IEEE80211_HE_PHY_CAP2_MIDAMBLE_RX_TX_MAX_NSTS);
+    output_caps->phy_cap_info[8] |= min_he_cap(sta_caps->phy_cap_info[8],
+            advertised_our_caps->phy_cap_info[8],
+            IEEE80211_HE_PHY_CAP8_MIDAMBLE_RX_TX_2X_AND_1XLTF);
+  }
+
+  output_caps->phy_cap_info[2] |= min_he_cap(sta_caps->phy_cap_info[2],
+          advertised_our_caps->phy_cap_info[2],
+          IEEE80211_HE_PHY_CAP2_STBC_TX_UNDER_80MHZ);
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[2],
+                       IEEE80211_HE_PHY_CAP2_STBC_TX_UNDER_80MHZ),
+            get_he_cap(advertised_our_caps->phy_cap_info[2],
+                       IEEE80211_HE_PHY_CAP2_STBC_RX_UNDER_80MHZ));
+  output_caps->phy_cap_info[2] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP2_STBC_TX_UNDER_80MHZ);
+
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[2],
+                       IEEE80211_HE_PHY_CAP2_STBC_RX_UNDER_80MHZ),
+            get_he_cap(advertised_our_caps->phy_cap_info[2],
+                       IEEE80211_HE_PHY_CAP2_STBC_TX_UNDER_80MHZ));
+  output_caps->phy_cap_info[2] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP2_STBC_RX_UNDER_80MHZ);
+
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[2],
+                       IEEE80211_HE_PHY_CAP2_DOPPLER_TX),
+            get_he_cap(advertised_our_caps->phy_cap_info[2],
+                       IEEE80211_HE_PHY_CAP2_DOPPLER_RX));
+  output_caps->phy_cap_info[2] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP2_DOPPLER_TX);
+
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[2],
+                       IEEE80211_HE_PHY_CAP2_DOPPLER_RX),
+            get_he_cap(advertised_our_caps->phy_cap_info[2],
+                       IEEE80211_HE_PHY_CAP2_DOPPLER_TX));
+  output_caps->phy_cap_info[2] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP2_DOPPLER_RX);
+  output_caps->phy_cap_info[2] |= min_he_cap(sta_caps->phy_cap_info[2],
+          advertised_our_caps->phy_cap_info[2],
+          IEEE80211_HE_PHY_CAP2_UL_MU_FULL_MU_MIMO);
+  output_caps->phy_cap_info[2] |= min_he_cap(sta_caps->phy_cap_info[2],
+          advertised_our_caps->phy_cap_info[2],
+          IEEE80211_HE_PHY_CAP2_UL_MU_PARTIAL_MU_MIMO);
+
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[3],
+                       IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_TX_MASK),
+            get_he_cap(non_advertised_our_caps->phy_cap_info[3],
+                       IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_RX_MASK));
+  output_caps->phy_cap_info[3] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_TX_MASK);
+
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[3],
+                       IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_RX_MASK),
+            get_he_cap(non_advertised_our_caps->phy_cap_info[3],
+                       IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_TX_MASK));
+  output_caps->phy_cap_info[3] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_RX_MASK);
+
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[3],
+                       IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_TX_MASK),
+            get_he_cap(non_advertised_our_caps->phy_cap_info[3],
+                       IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_RX_MASK));
+  output_caps->phy_cap_info[3] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_TX_MASK);
+
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[3],
+                       IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_RX_MASK),
+            get_he_cap(non_advertised_our_caps->phy_cap_info[3],
+                       IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_TX_MASK));
+  output_caps->phy_cap_info[3] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_RX_MASK);
+  output_caps->phy_cap_info[3] |= min_he_cap(sta_caps->phy_cap_info[3],
+          advertised_our_caps->phy_cap_info[3],
+          IEEE80211_HE_PHY_CAP3_RX_HE_MU_PPDU_FROM_NON_AP_STA);
+
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[3],
+                       IEEE80211_HE_PHY_CAP3_SU_BEAMFORMER),
+            get_he_cap(advertised_our_caps->phy_cap_info[4],
+                       IEEE80211_HE_PHY_CAP4_SU_BEAMFORMEE));
+  output_caps->phy_cap_info[3] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP3_SU_BEAMFORMER);
+
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[4],
+                       IEEE80211_HE_PHY_CAP4_SU_BEAMFORMEE),
+            get_he_cap(advertised_our_caps->phy_cap_info[3],
+                       IEEE80211_HE_PHY_CAP3_SU_BEAMFORMER));
+  output_caps->phy_cap_info[4] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP4_SU_BEAMFORMEE);
+  output_caps->phy_cap_info[4] |= min_he_cap(sta_caps->phy_cap_info[4],
+          advertised_our_caps->phy_cap_info[4],
+          IEEE80211_HE_PHY_CAP4_MU_BEAMFORMER);
+
+  if (sta_caps->phy_cap_info[4] & IEEE80211_HE_PHY_CAP3_SU_BEAMFORMER) {
+    min = MIN(get_he_cap(sta_caps->phy_cap_info[5],
+                         IEEE80211_HE_PHY_CAP5_BEAMFORMEE_NUM_SND_DIM_UNDER_80MHZ_MASK),
+              get_he_cap(advertised_our_caps->phy_cap_info[4],
+                         IEEE80211_HE_PHY_CAP4_BEAMFORMEE_MAX_STS_UNDER_80MHZ_MASK));
+    output_caps->phy_cap_info[5] |= set_he_cap(min,
+            IEEE80211_HE_PHY_CAP5_BEAMFORMEE_NUM_SND_DIM_UNDER_80MHZ_MASK);
+    min = MIN(get_he_cap(sta_caps->phy_cap_info[5],
+                         IEEE80211_HE_PHY_CAP5_BEAMFORMEE_NUM_SND_DIM_ABOVE_80MHZ_MASK),
+              get_he_cap(advertised_our_caps->phy_cap_info[4],
+                         IEEE80211_HE_PHY_CAP4_BEAMFORMEE_MAX_STS_ABOVE_80MHZ_MASK));
+    output_caps->phy_cap_info[5] |= set_he_cap(min,
+            IEEE80211_HE_PHY_CAP5_BEAMFORMEE_NUM_SND_DIM_ABOVE_80MHZ_MASK);
+  }
+  output_caps->phy_cap_info[5] |= min_he_cap(sta_caps->phy_cap_info[5],
+          non_advertised_our_caps->phy_cap_info[5],
+          IEEE80211_HE_PHY_CAP5_NG16_SU_FEEDBACK);
+  output_caps->phy_cap_info[5] |= min_he_cap(sta_caps->phy_cap_info[5],
+          non_advertised_our_caps->phy_cap_info[5],
+          IEEE80211_HE_PHY_CAP5_NG16_MU_FEEDBACK);
+
+  output_caps->phy_cap_info[6] |= min_he_cap(sta_caps->phy_cap_info[6],
+          non_advertised_our_caps->phy_cap_info[6],
+          IEEE80211_HE_PHY_CAP6_CODEBOOK_SIZE_42_SU);
+  output_caps->phy_cap_info[6] |= min_he_cap(sta_caps->phy_cap_info[6],
+          non_advertised_our_caps->phy_cap_info[6],
+          IEEE80211_HE_PHY_CAP6_CODEBOOK_SIZE_75_MU);
+  output_caps->phy_cap_info[6] |= min_he_cap(sta_caps->phy_cap_info[6],
+          advertised_our_caps->phy_cap_info[6],
+          IEEE80211_HE_PHY_CAP6_TRIG_SU_BEAMFORMER_FB);
+  output_caps->phy_cap_info[6] |= min_he_cap(sta_caps->phy_cap_info[6],
+          advertised_our_caps->phy_cap_info[6],
+          IEEE80211_HE_PHY_CAP6_TRIG_MU_BEAMFORMER_FB);
+  output_caps->phy_cap_info[6] |= min_he_cap(sta_caps->phy_cap_info[6],
+          advertised_our_caps->phy_cap_info[6],
+          IEEE80211_HE_PHY_CAP6_TRIG_CQI_FB);
+  output_caps->phy_cap_info[6] |= min_he_cap(sta_caps->phy_cap_info[6],
+          advertised_our_caps->phy_cap_info[6],
+          IEEE80211_HE_PHY_CAP6_PARTIAL_BW_EXT_RANGE);
+  output_caps->phy_cap_info[6] |= min_he_cap(sta_caps->phy_cap_info[6],
+          non_advertised_our_caps->phy_cap_info[6],
+          IEEE80211_HE_PHY_CAP6_PARTIAL_BANDWIDTH_DL_MUMIMO);
+  output_caps->phy_cap_info[6] |= min_he_cap(sta_caps->phy_cap_info[6],
+          non_advertised_our_caps->phy_cap_info[6],
+          IEEE80211_HE_PHY_CAP6_PPE_THRESHOLD_PRESENT);
+
+  output_caps->phy_cap_info[7] |= min_he_cap(sta_caps->phy_cap_info[7],
+          advertised_our_caps->phy_cap_info[7],
+          IEEE80211_HE_PHY_CAP7_SRP_BASED_SR);
+  output_caps->phy_cap_info[7] |= min_he_cap(sta_caps->phy_cap_info[7],
+          advertised_our_caps->phy_cap_info[7],
+          IEEE80211_HE_PHY_CAP7_POWER_BOOST_FACTOR_AR);
+  output_caps->phy_cap_info[7] |= min_he_cap(sta_caps->phy_cap_info[7],
+          non_advertised_our_caps->phy_cap_info[7],
+          IEEE80211_HE_PHY_CAP7_HE_SU_MU_PPDU_4XLTF_AND_08_US_GI);
+
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[7],
+                       IEEE80211_HE_PHY_CAP7_STBC_TX_ABOVE_80MHZ),
+            get_he_cap(advertised_our_caps->phy_cap_info[7],
+                       IEEE80211_HE_PHY_CAP7_STBC_RX_ABOVE_80MHZ));
+  output_caps->phy_cap_info[7] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP7_STBC_TX_ABOVE_80MHZ);
+
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[7],
+                       IEEE80211_HE_PHY_CAP7_STBC_RX_ABOVE_80MHZ),
+            get_he_cap(advertised_our_caps->phy_cap_info[7],
+                       IEEE80211_HE_PHY_CAP7_STBC_TX_ABOVE_80MHZ));
+  output_caps->phy_cap_info[7] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP7_STBC_RX_ABOVE_80MHZ);
+
+  if (output_caps->phy_cap_info[7] &
+      IEEE80211_HE_PHY_CAP7_HE_SU_MU_PPDU_4XLTF_AND_08_US_GI) {
+    output_caps->phy_cap_info[8] |= min_he_cap(sta_caps->phy_cap_info[8],
+            non_advertised_our_caps->phy_cap_info[8],
+            IEEE80211_HE_PHY_CAP8_HE_ER_SU_PPDU_4XLTF_AND_08_US_GI);
+  }
+
+  if (output_caps->phy_cap_info[0] &
+      IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_IN_2G) {
+    output_caps->phy_cap_info[8] |= min_he_cap(sta_caps->phy_cap_info[8],
+            non_advertised_our_caps->phy_cap_info[8],
+            IEEE80211_HE_PHY_CAP8_20MHZ_IN_40MHZ_HE_PPDU_IN_2G);
+  }
+
+  if (output_caps->phy_cap_info[0] &
+      IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_80MHZ_IN_5G) {
+    output_caps->phy_cap_info[8] |= min_he_cap(sta_caps->phy_cap_info[8],
+            non_advertised_our_caps->phy_cap_info[8],
+            IEEE80211_HE_PHY_CAP8_20MHZ_IN_160MHZ_HE_PPDU);
+  }
+
+  if (output_caps->phy_cap_info[0] &
+      IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_160MHZ_IN_5G) {
+    output_caps->phy_cap_info[8] |= min_he_cap(sta_caps->phy_cap_info[8],
+            non_advertised_our_caps->phy_cap_info[8],
+            IEEE80211_HE_PHY_CAP8_80MHZ_IN_160MHZ_HE_PPDU);
+  }
+  output_caps->phy_cap_info[8] |= min_he_cap(sta_caps->phy_cap_info[8],
+          non_advertised_our_caps->phy_cap_info[8],
+          IEEE80211_HE_PHY_CAP8_HE_ER_SU_1XLTF_AND_08_US_GI);
+
+  if ((output_caps->phy_cap_info[3] & IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_TX_MASK) ||
+      (output_caps->phy_cap_info[3] & IEEE80211_HE_PHY_CAP3_DCM_MAX_CONST_RX_MASK)) {
+    output_caps->phy_cap_info[8] |= min_he_cap(sta_caps->phy_cap_info[8],
+            advertised_our_caps->phy_cap_info[8],
+            IEEE80211_HE_PHY_CAP8_DCM_MAX_RU_MASK);
+  }
+
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[9],
+                       IEEE80211_HE_PHY_CAP9_TX_1024_QAM_LESS_THAN_242_TONE_RU),
+            get_he_cap(advertised_our_caps->phy_cap_info[9],
+                       IEEE80211_HE_PHY_CAP9_RX_1024_QAM_LESS_THAN_242_TONE_RU));
+  output_caps->phy_cap_info[9] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP9_TX_1024_QAM_LESS_THAN_242_TONE_RU);
+  min = MIN(get_he_cap(sta_caps->phy_cap_info[9],
+                       IEEE80211_HE_PHY_CAP9_RX_1024_QAM_LESS_THAN_242_TONE_RU),
+            get_he_cap(advertised_our_caps->phy_cap_info[9],
+                       IEEE80211_HE_PHY_CAP9_TX_1024_QAM_LESS_THAN_242_TONE_RU));
+  output_caps->phy_cap_info[9] |= set_he_cap(min,
+          IEEE80211_HE_PHY_CAP9_RX_1024_QAM_LESS_THAN_242_TONE_RU);
+  output_caps->phy_cap_info[9] |= min_he_cap(sta_caps->phy_cap_info[9],
+          non_advertised_our_caps->phy_cap_info[9],
+          IEEE80211_HE_PHY_CAP9_LONGER_THAN_16_SIGB_OFDM_SYM);
+  output_caps->phy_cap_info[9] |= min_he_cap(sta_caps->phy_cap_info[9],
+          non_advertised_our_caps->phy_cap_info[9],
+          IEEE80211_HE_PHY_CAP9_RX_FULL_BW_SU_USING_MU_WITH_COMP_SIGB);
+  output_caps->phy_cap_info[9] |= min_he_cap(sta_caps->phy_cap_info[9],
+          non_advertised_our_caps->phy_cap_info[9],
+          IEEE80211_HE_PHY_CAP9_RX_FULL_BW_SU_USING_MU_WITH_NON_COMP_SIGB);
+  output_caps->phy_cap_info[9] |= min_he_cap(sta_caps->phy_cap_info[9],
+          advertised_our_caps->phy_cap_info[9],
+          IEEE80211_HE_PHY_CAP9_NON_TRIGGERED_CQI_FEEDBACK);
+}
+
+static int wv_negotiate_sta_he_cap(mtlk_df_user_t *df_user,
+    struct ieee80211_hw *hw,
+    struct ieee80211_vif *vif,
+    struct ieee80211_sta_he_cap *sta_he_cap)
+{
+  mtlk_core_t *core;
+  mtlk_pdb_t *param_db_core;
+  struct ieee80211_supported_band *sband;
+  const struct ieee80211_sta_he_cap *hw_he_cap;
+  mtlk_pdb_size_t pdb_len = HE_NON_ADVERTISED_LEN;
+  struct ieee80211_channel *chan;
+  struct ieee80211_sta_he_cap neg_sta_he_cap;
+  struct ieee80211_he_cap_elem hw_non_adv_he_cap;
+  size_t max_sta_he_cap_len = sizeof(struct ieee80211_sta_he_cap);
+  struct mtlk_he_debug_mode_data adv_he_capab;
+  mtlk_pdb_size_t adv_he_capab_len = sizeof(struct mtlk_he_debug_mode_data);
+
+  core = mtlk_vap_get_core(mtlk_df_get_vap_handle(mtlk_df_user_get_df(df_user)));
+  MTLK_ASSERT(NULL != core);
+
+  rcu_read_lock();
+  chan = rcu_dereference(vif->chanctx_conf)->def.chan;
+  MTLK_ASSERT(NULL != chan);
+  rcu_read_unlock();
+
+  sband = hw->wiphy->bands[chan->band];
+  if (!sband || !sband->iftype_data || !sband->iftype_data->he_cap.has_he)
+    return -EINVAL;
+
+  hw_he_cap = &sband->iftype_data->he_cap;
+  memset(&hw_non_adv_he_cap, 0, sizeof(struct ieee80211_he_cap_elem));
+  param_db_core = mtlk_vap_get_param_db(core->vap_handle);
+  wave_pdb_get_binary(param_db_core, PARAM_DB_CORE_HE_NON_ADVERTISED,
+                      (u8 *)&hw_non_adv_he_cap, &pdb_len);
+
+  wave_pdb_get_binary(param_db_core, PARAM_DB_CORE_HE_DEBUG_DATA,
+		      &adv_he_capab, &adv_he_capab_len);
+
+  mtlk_dump(1, sta_he_cap, max_sta_he_cap_len, "Received: STA HE Cap");
+
+  memset(&neg_sta_he_cap, 0, max_sta_he_cap_len);
+  if (adv_he_capab.he_debug_mode_enabled) {
+    ILOG0_V("Add STA HE Debug Mode Enabled\n");
+    wv_negotiate_sta_he_mac_phy_capab(&sta_he_cap->he_cap_elem, &adv_he_capab.he_cap_elem,
+                                      &hw_non_adv_he_cap, &neg_sta_he_cap.he_cap_elem);
+    wv_negotiate_sta_he_mcs_nss(&neg_sta_he_cap.he_cap_elem, &sta_he_cap->he_mcs_nss_supp,
+                                &adv_he_capab.he_mcs_nss_supp, &neg_sta_he_cap.he_mcs_nss_supp);
+  } else {
+    wv_negotiate_sta_he_mac_phy_capab(&sta_he_cap->he_cap_elem, &hw_he_cap->he_cap_elem,
+                                      &hw_non_adv_he_cap, &neg_sta_he_cap.he_cap_elem);
+    wv_negotiate_sta_he_mcs_nss(&neg_sta_he_cap.he_cap_elem, &sta_he_cap->he_mcs_nss_supp,
+                                &hw_he_cap->he_mcs_nss_supp, &neg_sta_he_cap.he_mcs_nss_supp);
+  }
+  neg_sta_he_cap.has_he =true;
+  wave_memcpy(sta_he_cap, max_sta_he_cap_len, &neg_sta_he_cap, max_sta_he_cap_len);
+
+  mtlk_dump(1, sta_he_cap, max_sta_he_cap_len, "Negotiated: STA HE Cap");
+
+  return 0;
 }
 
 static int wv_request_sta_connect_ap(mtlk_df_user_t *df_user,
@@ -2546,7 +3027,10 @@ static int wv_request_sta_connect_ap(mtlk_df_user_t *df_user,
     }
   }
 
-  if(sta->he_cap.has_he) {
+  if (sta->he_cap.has_he) {
+    if (wv_negotiate_sta_he_cap(df_user, hw, vif, &sta->he_cap))
+      return -EINVAL;
+
     MTLK_BFIELD_SET(sta_info_p->flags, STA_FLAGS_11ax, 1);
 	MTLK_BIT_SET(sta_info_p->sta_net_modes, MTLK_WSSA_11AX_SUPPORTED, 1);
   }
@@ -3134,6 +3618,11 @@ static int _wv_ieee80211_op_conf_tx (struct ieee80211_hw *hw,
   master_df = mtlk_df_user_get_master_df(df_user);
   vap_id = mtlk_vap_get_id(vap_handle);
 
+  if (!wv_iface_inf->is_initialized) {
+    ILOG1_D("vap %d is not initialized, not setting wmm", vap_id);
+    goto end;
+  }
+
   res = _mtlk_df_user_invoke_core(master_df, WAVE_CORE_REQ_SET_WMM_PARAM, &clpb, &vap_id, sizeof(vap_id));
   res = _mtlk_df_user_process_core_retval(res, clpb, WAVE_CORE_REQ_SET_WMM_PARAM, TRUE);
 
@@ -3204,7 +3693,7 @@ static void _wv_ieee80211_op_bss_info_changed (struct ieee80211_hw *hw,
 
   if (changed & BSS_CHANGED_BANDWIDTH) {
     ILOG2_V("Change bandwidth");
-    hw->conf.chandef.width = info->chandef.width;
+    hw->conf.chandef = info->chandef;
 
     _wv_ieee80211_op_config(hw, IEEE80211_CONF_CHANGE_CHANNEL);
     changed &= ~BSS_CHANGED_BANDWIDTH;
@@ -3807,6 +4296,7 @@ wv_ieee80211_setup_register (struct device *dev, wv_mac80211_t *mac80211, mtlk_h
   hw->wiphy->max_match_sets = MAX_MATCH_SETS;
   hw->wiphy->max_scan_ie_len = MAX_SCAN_IE_LEN;
   hw->wiphy->max_sched_scan_ie_len = MAX_SCAN_IE_LEN;
+  hw->wiphy->out_of_scan_caching = 0; /* disabled */
   hw->queues = MAC80211_HW_TX_QUEUES; /*number of available hardware transmit queues for data packets.*/
 
   hw->wiphy->iface_combinations = create_cfg80211_if_comb(hw_handle, mac80211->radio);
@@ -4118,17 +4608,19 @@ wv_mac80211_recover_sta_vifs(wv_mac80211_t *mac80211)
 
 static int _wv_ieee80211_op_set_rts_threshold(struct ieee80211_hw *hw, u32 value)
 {
+  wave_radio_t *radio;
+
   MTLK_ASSERT(hw != NULL);
 
-  ILOG1_D("RTS Threshold set to %d. Ignoring, value is hard coded in FW", value);
+  radio  = wv_ieee80211_hw_radio_get(hw);
+  MTLK_ASSERT(NULL != radio);
 
-  return 0;
+  return wave_radio_rts_threshold_set(radio, value);
 }
 
 static void wv_request_get_sta_stats(mtlk_df_user_t *df_user,
-          struct ieee80211_sta *sta, struct station_info *sinfo)
+          st_info_data_t *info_data)
 {
-  st_info_data_t info_data;
   mtlk_clpb_t *clpb = NULL;
   int res = MTLK_ERR_OK;
 
@@ -4136,11 +4628,8 @@ static void wv_request_get_sta_stats(mtlk_df_user_t *df_user,
       wave_rcvry_mac_fatal_pending_get(mtlk_vap_get_hw(mtlk_df_get_vap_handle(mtlk_df_user_get_df(df_user)))))
     return;
 
-  info_data.sta = sta;
-  info_data.mac = sta->addr;
-  info_data.stinfo = sinfo;
   res = _mtlk_df_user_invoke_core(mtlk_df_user_get_df(df_user),
-    WAVE_CORE_REQ_GET_STATION, &clpb, &info_data, sizeof(st_info_data_t));
+    WAVE_CORE_REQ_GET_STATION, &clpb, info_data, sizeof(st_info_data_t));
   res = _mtlk_df_user_process_core_retval(res, clpb,
     WAVE_CORE_REQ_GET_STATION, TRUE);
 
@@ -4154,6 +4643,7 @@ static void _wv_ieee80211_op_sta_statistics(struct ieee80211_hw *hw,
   mtlk_wssa_drv_tr181_peer_stats_t *sta_stats;
   uint32 stats_size;
   mtlk_clpb_t *clpb = NULL;
+  st_info_data_t info_data;
   int res = MTLK_ERR_OK;
   mtlk_vap_handle_t vap_handle;
   mtlk_df_user_t *df_user = wv_ieee80211_vif_to_dfuser(vif);
@@ -4170,10 +4660,13 @@ static void _wv_ieee80211_op_sta_statistics(struct ieee80211_hw *hw,
 
   MTLK_ASSERT(sta != NULL);
 
-  wv_request_get_sta_stats(df_user, sta, sinfo);
+  info_data.sta = sta;
+  info_data.mac = sta->addr;
+  info_data.stinfo = sinfo;
+  wv_request_get_sta_stats(df_user, &info_data);
 
   res = _mtlk_df_user_invoke_core(mtlk_df_user_get_df(df_user),
-    WAVE_CORE_REQ_GET_TR181_PEER_STATS, &clpb, sta->addr, IEEE_ADDR_LEN);
+    WAVE_CORE_REQ_GET_TR181_PEER_STATS, &clpb, &info_data, sizeof(st_info_data_t));
   res = _mtlk_df_user_process_core_retval(res, clpb,
     WAVE_CORE_REQ_GET_TR181_PEER_STATS, FALSE);
 
@@ -4409,10 +4902,12 @@ out:
 }
 
 static int _wv_ieee80211_op_start_ap(struct ieee80211_hw *hw,
-    struct ieee80211_vif *vif)
+                                     struct ieee80211_vif *vif)
 {
   struct wireless_dev *wdev = ieee80211_vif_to_wdev(vif);
   wave_radio_t *radio = wv_ieee80211_hw_radio_get(hw);
+  mtlk_df_user_t *df_user;
+  mtlk_vap_handle_t vap_handle;
   int res;
   struct cfg80211_beacon_data beacon = {0};
 
@@ -4425,6 +4920,26 @@ static int _wv_ieee80211_op_start_ap(struct ieee80211_hw *hw,
 
   ILOG0_S("%s: start_ap", ieee80211_vif_to_name(vif));
   MTLK_ASSERT(NULL != radio);
+
+  df_user = wv_ieee80211_vif_to_dfuser(vif);
+  if (df_user == NULL) {
+    res = MTLK_ERR_UNKNOWN;
+    goto out;
+  }
+
+  vap_handle = mtlk_df_get_vap_handle(mtlk_df_user_get_df(df_user));
+
+  if (!mtlk_vap_is_master(vap_handle)) {
+    res = wave_radio_abort_and_prevent_scan(radio);
+    if (MTLK_ERR_OK != res)
+      goto out;
+    res = _wv_activate_vif(df_user);
+    if (MTLK_ERR_OK != res){
+      wave_radio_allow_or_resume_scan(radio);
+      goto out;
+    }
+    res = wave_radio_allow_or_resume_scan(radio);
+  }
 
   res = _wv_ieee80211_get_beacon_template_data(hw, vif, &beacon);
   if (res != 0) {
@@ -4580,10 +5095,19 @@ _wv_ieee80211_op_notify_cac_started(struct ieee80211_hw *hw,
                                     struct ieee80211_vif *vif,
                                     u32 cac_time_ms)
 {
-  MTLK_UNREFERENCED_PARAM(hw);
+  mtlk_error_t res;
+  mtlk_df_t *master_df;
+  mtlk_clpb_t *clpb = NULL;
 
   ILOG0_SD("%s: CAC started, cac time %i ms",
            ieee80211_vif_to_name(vif), cac_time_ms);
+
+  master_df = __wv_ieee80211_hw_master_df_get(hw);
+  if(!master_df)
+    return;
+
+  res = _mtlk_df_user_invoke_core(master_df, WAVE_RADIO_REQ_NOTIFY_CAC_STARTED, &clpb, NULL, 0);
+  _mtlk_df_user_process_core_retval_void(res, clpb, WAVE_RADIO_REQ_NOTIFY_CAC_STARTED, TRUE);
 }
 
 static void
@@ -4591,10 +5115,19 @@ _wv_ieee80211_op_notify_cac_finished(struct ieee80211_hw *hw,
                                      struct ieee80211_vif *vif,
                                      bool cac_canceled)
 {
-  MTLK_UNREFERENCED_PARAM(hw);
+  mtlk_error_t res;
+  mtlk_df_t *master_df;
+  mtlk_clpb_t *clpb = NULL;
 
-  ILOG0_SD("%s: CAC %s", ieee80211_vif_to_name(vif),
+  ILOG0_SS("%s: CAC %s", ieee80211_vif_to_name(vif),
            cac_canceled ? "canceled" : "finished");
+
+  master_df = __wv_ieee80211_hw_master_df_get(hw);
+  if(!master_df)
+    return;
+
+  res = _mtlk_df_user_invoke_core(master_df, WAVE_RADIO_REQ_NOTIFY_CAC_FINISHED, &clpb, NULL, 0);
+  _mtlk_df_user_process_core_retval_void(res, clpb, WAVE_RADIO_REQ_NOTIFY_CAC_FINISHED, TRUE);
 }
 
 static void

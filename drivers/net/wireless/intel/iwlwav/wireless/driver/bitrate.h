@@ -62,6 +62,7 @@ typedef struct {
 
 /* Bitrate values representation is fixed point 10*Mbps, e.g. 60 means 6.0 Mbit/s */
 #define MTLK_BITRATE_INVALID    (0) /* use zero value if rate is unknown/invalid */
+#define MTLK_BPS_PER_KBPS       1000
 #define MTLK_KBPS_PER_MBPS      1000
 #define MTLK_KBPS_TO_MBPS(kbps) ((kbps) / MTLK_KBPS_PER_MBPS)
 
@@ -69,8 +70,12 @@ typedef struct {
 
 
 #define MTLK_BITRATE_FACTOR     10
+#define MTLK_BITRATE_TO_BPS(x)  ((x) * (MTLK_KBPS_PER_MBPS  / MTLK_BITRATE_FACTOR) * MTLK_BPS_PER_KBPS)
 #define MTLK_BITRATE_TO_MBPS(x) (((x) + (MTLK_BITRATE_FACTOR / 2)) / MTLK_BITRATE_FACTOR) /* with rounding */
 #define MTLK_BITRATE_TO_KBPS(x) MTLK_BITRATE_TO_MBPS((x) * MTLK_KBPS_PER_MBPS)
+
+/* Supported rates are in 0.5 MHz units */
+#define MTLK_SUPP_RATE_TO_BITRATE(x)  ((x) * MTLK_BITRATE_FACTOR / 2)
 
 typedef uint16  mtlk_bitrate_info16_t;
 #define MTLK_BITRATE_PLUME_HT_MCS              MTLK_BFIELD_INFO(0, 3)  /* 3 bits [MCS index] */
@@ -271,7 +276,10 @@ mtlk_bitrate_params_to_rate(mtlk_bitrate_params_t bitrate_params)
 }
 
 BOOL __MTLK_IFUNC
-mtlk_bitrate_params_supported (uint32 mode, uint32 cbw, uint32 scp, uint32 mcs, uint32 nss);
+mtlk_bitrate_hw_params_supported (uint32 mode, uint32 cbw, uint32 scp, uint32 mcs, uint32 nss);
+
+BOOL __MTLK_IFUNC
+mtlk_bitrate_hw_params_supported_rate (uint32 *rate, uint32 mode, uint32 cbw, uint32 scp, uint32 mcs, uint32 nss);
 
 int __MTLK_IFUNC mtlk_bitrate_get_value (int index, int sm, int scp);
 

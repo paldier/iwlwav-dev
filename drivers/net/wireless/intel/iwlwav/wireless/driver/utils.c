@@ -200,3 +200,55 @@ size_t __MTLK_IFUNC wave_remove_spaces (char* str, size_t len)
   }
   return i - str;
 }
+
+u8 __MTLK_IFUNC find_bit_offset (u8 val)
+{
+  u8 res = 0;
+  for (; val; val >>= 1) {
+     if (val & 1)
+       break;
+     res++;
+  }
+  return res;
+}
+
+void __MTLK_IFUNC clr_set_he_cap (u8 *field, int val, u8 mask)
+{
+  *field &= ~mask;
+  *field |= (u8) (mask & (val << find_bit_offset(mask)));
+}
+
+u8 __MTLK_IFUNC set_he_cap(int val, u8 mask)
+{
+  return (u8) (mask & (val << find_bit_offset(mask)));
+}
+
+u8 __MTLK_IFUNC get_he_cap(int val, u8 mask)
+{
+  return (u8) ((mask & val) >> find_bit_offset(mask));
+}
+
+u8 __MTLK_IFUNC min_he_cap(int val1, int val2, u8 mask)
+{
+  u8 res;
+
+  res = MIN(get_he_cap(val1, mask), get_he_cap(val2, mask));
+  return (u8) (res << find_bit_offset(mask));
+}
+
+void __MTLK_IFUNC get_he_mcs_nss(const __le16 our_he_mcs_nss,
+  __le16 sta_he_mcs_nss, __le16 *out_he_mcs_nss)
+{
+  u8 j, a, b, c;
+  __le16 k;
+
+  for (j = 0, k = 3; j < 8; j++, k = k << 2) {
+     a = (our_he_mcs_nss & k) >> (j * 2);
+     b = (sta_he_mcs_nss & k) >> (j * 2);
+     c = MIN(a,b);
+     if ((a == 3) || (b == 3))
+       *out_he_mcs_nss |= k;
+     else
+       *out_he_mcs_nss |= (k & c << (j * 2));
+  }
+}

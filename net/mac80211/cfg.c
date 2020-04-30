@@ -2920,16 +2920,17 @@ static int ieee80211_start_radar_detection(struct wiphy *wiphy,
 	sdata->smps_mode = IEEE80211_SMPS_OFF;
 	sdata->needed_rx_chains = local->rx_chains;
 
+	drv_notify_cac_started(local, sdata, cac_time_ms);
 	err = ieee80211_vif_use_channel(sdata, chandef,
 					IEEE80211_CHANCTX_SHARED);
-	if (err)
+	if (err) {
+		drv_notify_cac_finished(local, sdata, true);
 		goto out_unlock;
+	}
 
 	ieee80211_queue_delayed_work(&sdata->local->hw,
 				     &sdata->dfs_cac_timer_work,
 				     msecs_to_jiffies(cac_time_ms));
-
-	drv_notify_cac_started(local, sdata, cac_time_ms);
 
  out_unlock:
 	mutex_unlock(&local->mtx);

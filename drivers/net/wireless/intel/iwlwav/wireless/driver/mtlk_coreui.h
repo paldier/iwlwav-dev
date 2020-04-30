@@ -199,12 +199,15 @@ typedef enum
   WAVE_RADIO_REQ_SET_DBG_CLI,                   /*!< Send debug data to FW */
   WAVE_RADIO_REQ_SET_FW_LOG_SEVERITY,           /*!< Set FW Log Severity */
   WAVE_RADIO_REQ_SET_CHAN,                      /*!< Set channel */
+  WAVE_RADIO_REQ_NOTIFY_CAC_STARTED,            /*!< Notify CAC started */
+  WAVE_RADIO_REQ_NOTIFY_CAC_FINISHED,           /*!< Notify CAC finished */
   WAVE_RADIO_REQ_DO_SCAN,                       /*!< Do scan */
   WAVE_RADIO_REQ_SCAN_TIMEOUT,                  /*!< Handle scan timeout */
   WAVE_RADIO_REQ_ALTER_SCAN,                    /*!< Alter current scan: abort/pause/resume */
   WAVE_RADIO_REQ_DUMP_SURVEY,                   /*!< Dump survey */
   WAVE_RADIO_REQ_FIN_PREV_FW_SC,                /*!< Finish and prevent FW set-channel process */
   WAVE_RADIO_REQ_GET_PHY_RX_STATUS,             /*!< Process Phy Rx status */
+  WAVE_RADIO_REQ_GET_PHY_CHAN_STATUS,           /*!< Get phy channel status */
   WAVE_RADIO_REQ_GET_HW_LIMITS,                 /*!< Get HW Limits */
   WAVE_RADIO_REQ_SET_MAC_ASSERT,                /*!< Perform MAC assert */
   WAVE_RADIO_REQ_GET_BCL_MAC_DATA,              /*!< Get BCL MAC data */
@@ -231,6 +234,8 @@ typedef enum
   WAVE_RADIO_REQ_SET_MASTER_CFG,                /*!< Process Core */
   WAVE_RADIO_REQ_GET_COC_CFG,                   /*!< Process COC */
   WAVE_RADIO_REQ_SET_COC_CFG,                   /*!< Process COC */
+  WAVE_RADIO_REQ_GET_ERP_CFG,                   /*!< Process ERP */
+  WAVE_RADIO_REQ_SET_ERP_CFG,                   /*!< Process ERP */
   WAVE_RADIO_REQ_GET_PCOC_CFG,                  /*!< Process PCOC */
   WAVE_RADIO_REQ_SET_PCOC_CFG,                  /*!< Process PCOC */
   WAVE_RADIO_REQ_GET_TPC_CFG,                   /*!< TPC config */
@@ -294,6 +299,10 @@ typedef enum
   WAVE_RADIO_REQ_GET_CDB_CFG,                   /*!< Get CDB mode */
   WAVE_RADIO_REQ_SET_RTS_RATE,                  /*!< Set RTS Protection Rate Configuration */
   WAVE_RADIO_REQ_GET_PHY_INBAND_POWER,          /*!< Get InBand Power */
+  WAVE_RADIO_REQ_SET_RTS_THRESHOLD,             /*!< Set RTS Threshold */
+  WAVE_RADIO_REQ_GET_RTS_THRESHOLD,             /*!< Get RTS Threshold */
+  WAVE_RADIO_REQ_SET_AP_RETRY_LIMIT,            /*!< Set Tx Retry Limit */
+  WAVE_RADIO_REQ_GET_AP_RETRY_LIMIT,            /*!< Get Tx Retry Limit */
 
   WAVE_RADIO_REQ_SET_STATIONS_STATS,            /*!< Set stations statistics */
   WAVE_RADIO_REQ_GET_STATIONS_STATS,            /*!< Get stations statistics */
@@ -332,7 +341,8 @@ typedef enum
   WAVE_HW_REQ_SET_ZWDFS_ANT,                    /*!< Enable/Disable ZWDFS Antenna */
   WAVE_HW_REQ_GET_ZWDFS_ANT,                    /*!< Get ZWDFS Antenna config */
   WAVE_CORE_REQ_GET_DEV_DIAG_RESULT2,
-  WAVE_CORE_REQ_GET_DEV_DIAG_RESULT3
+  WAVE_CORE_REQ_GET_DEV_DIAG_RESULT3,
+  WAVE_CORE_REQ_SET_CHAN_SWITCH_DEAUTH_PARAMS,
 } mtlk_core_tx_req_id_t;
 
 
@@ -591,14 +601,6 @@ MTLK_DECLARE_CFG_END(mtlk_core_rts_mode_t)
 #define WAVE_TXOP_CFG_MODE_MAX                    UMI_TXOP_MODE_ENABLED
 #define WAVE_TXOP_CFG_MODE_DEFAULT                UMI_TXOP_MODE_ENABLED
 
-typedef struct mtlk_erp_cfg
-{
-  uint32 initial_wait_time; /* seconds */
-  uint32 radio_off_time;    /* milliseconds */
-  uint32 radio_on_time;     /* milliseconds */
-  uint32 erp_enabled;       /* 0 - dsiabled, 1 - enabled */
-} mtlk_erp_cfg_t;
-
 MTLK_DECLARE_CFG_START(mtlk_master_core_cfg_t)
   MTLK_CFG_ITEM(uint32, acs_update_timeout)
   MTLK_CFG_ITEM(BOOL, mu_operation)
@@ -611,7 +613,6 @@ MTLK_DECLARE_CFG_START(mtlk_master_core_cfg_t)
   MTLK_CFG_ITEM(FixedPower_t, fixed_pwr_params)
   MTLK_CFG_ITEM(uint32, unconnected_sta_scan_time)
   MTLK_CFG_ITEM(uint8, fast_drop)
-  MTLK_CFG_ITEM(mtlk_erp_cfg_t, erp_cfg)
   MTLK_CFG_ITEM(uint32, dynamic_mc_rate)
 MTLK_DECLARE_CFG_END(mtlk_master_core_cfg_t)
 
@@ -623,12 +624,16 @@ MTLK_DECLARE_CFG_END(mtlk_hstdb_cfg_t)
 
 /* COC structure */
 MTLK_DECLARE_CFG_START(mtlk_coc_mode_cfg_t)
-  MTLK_CFG_ITEM(BOOL, is_auto_mode)
-  MTLK_CFG_ITEM(mtlk_coc_antenna_cfg_t, antenna_params)
-  MTLK_CFG_ITEM(mtlk_coc_auto_cfg_t, auto_params)
+  MTLK_CFG_ITEM(mtlk_coc_power_cfg_t, power_params)
+  MTLK_CFG_ITEM(mtlk_coc_auto_cfg_t,  auto_params)
   MTLK_CFG_ITEM(uint8, cur_ant_mask)
   MTLK_CFG_ITEM(uint8, hw_ant_mask)
 MTLK_DECLARE_CFG_END(mtlk_coc_mode_cfg_t)
+
+/* COC structure */
+MTLK_DECLARE_CFG_START(mtlk_erp_mode_cfg_t)
+  MTLK_CFG_ITEM(mtlk_coc_erp_cfg_t, erp_cfg)
+MTLK_DECLARE_CFG_END(mtlk_erp_mode_cfg_t)
 
 #ifdef CPTCFG_IWLWAV_PMCU_SUPPORT
 /* PCOC structure */
@@ -1080,6 +1085,11 @@ MTLK_DECLARE_CFG_START(wave_ui_mode_t)
   MTLK_CFG_ITEM(int, mode) /* BOOL */
 MTLK_DECLARE_CFG_END(wave_ui_mode_t)
 
+#define MTLK_TX_RETRY_LIMIT_MAX        15
+MTLK_DECLARE_CFG_START(wave_ui_uchar_param_t)
+  MTLK_CFG_ITEM(uint8, param)
+MTLK_DECLARE_CFG_END(wave_ui_uchar_param_t)
+
 #ifdef CPTCFG_IWLWAV_SET_PM_QOS
 MTLK_DECLARE_CFG_START(mtlk_pm_qos_cfg_t)
   MTLK_CFG_ITEM(s32, cpu_dma_latency);
@@ -1163,6 +1173,7 @@ MTLK_DECLARE_CFG_START(mtlk_scan_and_calib_cfg_t);
   MTLK_CFG_ITEM(uint8, rbm); /* radar Bit Map */
   MTLK_CFG_ITEM(uint32, radar_detect);
   MTLK_CFG_ITEM(uint32, scan_expire_time);
+  MTLK_CFG_ITEM(int, out_of_scan_cache);
 MTLK_DECLARE_CFG_END(mtlk_scan_and_calib_cfg_t)
 
 typedef void (*vfunptr)(void);
@@ -1426,6 +1437,10 @@ MTLK_DECLARE_CFG_END(mtlk_phy_inband_power_cfg_t)
 MTLK_DECLARE_CFG_START(mtlk_wlan_stations_stats_enabled_cfg_t)
   MTLK_CFG_ITEM(unsigned, enabled)
 MTLK_DECLARE_CFG_END(mtlk_wlan_stations_stats_enabled_cfg_t)
+
+MTLK_DECLARE_CFG_START(mtlk_wlan_rts_threshold_cfg_t)
+  MTLK_CFG_ITEM(unsigned, threshold)
+MTLK_DECLARE_CFG_END(mtlk_wlan_rts_threshold_cfg_t)
 
 /* The CW_ values must be 0, 1, 2, 3, X, where X >= 4. */
 enum chanWidth
@@ -1774,6 +1789,13 @@ struct mtlk_txq_params
   u8 aifs;
   u8 acm_flag;
   u8 ac;
+};
+
+struct mtlk_he_debug_mode_data {
+  u8 he_debug_mode_enabled;
+  struct ieee80211_he_cap_elem he_cap_elem;
+  struct ieee80211_he_mcs_nss_supp he_mcs_nss_supp;
+  u8 ppe_thresholds[13];
 };
 
 struct mtlk_channel_status

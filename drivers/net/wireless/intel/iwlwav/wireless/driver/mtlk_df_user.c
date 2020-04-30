@@ -2501,30 +2501,31 @@ _mtlk_df_user_intvec_by_11b_antsel (uint32 *intvec, uint16 max_length, uint16 *i
 static void
 _mtlk_df_user_get_intvec_by_auto_params (uint32 *intvec, uint16 max_length, uint16 *intvec_lenth, const mtlk_coc_auto_cfg_t *auto_params)
 {
-  MTLK_ASSERT(max_length >= 10);
+  MTLK_ASSERT(max_length >= MTLK_COC_AUTO_MAX_CFG_PARAMS);
 
-  intvec[0] = auto_params->interval_1x1;
-  intvec[1] = auto_params->interval_2x2;
-  intvec[2] = auto_params->interval_3x3;
-  intvec[3] = auto_params->interval_4x4;
-  intvec[4] = auto_params->high_limit_1x1;
-  intvec[5] = auto_params->low_limit_2x2;
-  intvec[6] = auto_params->high_limit_2x2;
-  intvec[7] = auto_params->low_limit_3x3;
-  intvec[8] = auto_params->high_limit_3x3;
-  intvec[9] = auto_params->low_limit_4x4;
-  *intvec_lenth = 10;
+  wave_wordcpy(intvec, max_length, auto_params->values, MTLK_COC_AUTO_MAX_CFG_PARAMS);
+
+  *intvec_lenth = MTLK_COC_AUTO_MAX_CFG_PARAMS;
 }
 
 static void
-_mtlk_df_user_get_intvec_by_antenna_params (uint32 *intvec, uint16 max_length, uint16 *intvec_lenth, const mtlk_coc_antenna_cfg_t *antenna_params)
+_mtlk_df_user_get_intvec_by_coc_power_params (uint32 *intvec, uint16 max_length, uint16 *intvec_lenth,
+                                              const mtlk_coc_power_cfg_t *power_params)
 {
-  MTLK_ASSERT(max_length >= 3);
+  MTLK_ASSERT(max_length >= MTLK_COC_PW_ANT_CFG_PARAMS);
 
-  intvec[1] = antenna_params->num_tx_antennas;
-  intvec[2] = antenna_params->num_rx_antennas;
+  intvec[0] = power_params->is_auto_mode;
+  intvec[1] = power_params->antenna_params.num_tx_antennas;
+  intvec[2] = power_params->antenna_params.num_rx_antennas;
 
-  *intvec_lenth = 3;
+  intvec[3] = power_params->ant_mask_params.mask[0];
+  intvec[4] = power_params->ant_mask_params.mask[1];
+  intvec[5] = power_params->ant_mask_params.mask[2];
+  intvec[6] = power_params->ant_mask_params.mask[3];
+  ILOG3_D("mask 0x%08X", power_params->ant_mask_params.word);
+
+  MTLK_STATIC_ASSERT(7 == MTLK_COC_PW_MAX_CFG_PARAMS);
+  *intvec_lenth = MTLK_COC_PW_MAX_CFG_PARAMS;
 }
 
 #ifdef CPTCFG_IWLWAV_PMCU_SUPPORT
@@ -2570,25 +2571,51 @@ _mtlk_df_user_intvec_by_recovery_stats (uint32 *intvec, uint16 max_length, uint1
   *intvec_length = 4;
 }
 
-static int
-_mtlk_df_user_get_coc_antenna_params_by_intvec (const uint32 *intvec, uint16 intvec_length, mtlk_coc_antenna_cfg_t *antenna_params)
+static mtlk_error_t
+_mtlk_df_user_get_coc_power_ant_mask_params_by_intvec (const uint32 *intvec, size_t nof_masks,
+                                                       mtlk_coc_ant_mask_cfg_t *ant_mask_params)
+{
+  uint32 value, mask;
+  size_t i;
+
+  for (i = 0; i < MIN(ARRAY_SIZE(ant_mask_params->mask), nof_masks); i++) {
+    if (i < nof_masks) {
+      value = intvec[i];
+      if (value <= MTLK_COC_ANT_MASK_VALUE_MAX) {
+        mask = value;
+      } else if ((value == MTLK_COC_ANT_MASK_VALUE_UNDEF) || (value == MAX_UINT32)) {
+        mask = MTLK_COC_ANT_MASK_VALUE_UNDEF; /* for both 0xFF (255) and 0xFFFFFFFF (-1) */
+      } else {
+        ELOG_DD("Invalid AntMask[%u] value (0x%X)", i, value);
+        return MTLK_ERR_PARAMS;
+      }
+    } else {
+      mask = MTLK_COC_ANT_MASK_VALUE_UNDEF;
+    }
+    ant_mask_params->mask[i] = mask;
+    ILOG3_DD("[%u] mask 0x%02X", i, ant_mask_params->mask[i]);
+  }
+
+  return MTLK_ERR_OK;
+}
+
+static mtlk_error_t
+_mtlk_df_user_get_coc_power_params_by_intvec (const uint32 *intvec, uint16 intvec_length, mtlk_coc_power_cfg_t *power_params)
 {
   uint32 mode, num_rx_ant, num_tx_ant;
-  int res = MTLK_ERR_PARAMS;
+  mtlk_error_t res = MTLK_ERR_PARAMS;
 
-  memset(antenna_params, 0, sizeof(mtlk_coc_antenna_cfg_t));
+  memset(power_params, 0, sizeof(*power_params));
 
   mode = intvec[0]; /* 0 - manual, 1 - auto */
   if ((mode != 0) && (mode != 1)) {
     ELOG_D("Incorrect vector configuration: <enable mode %u>", mode);
   }
-  else if(((mode == 1) && (intvec_length != 1)) ||
-          ((mode == 0) && (intvec_length != 3))) {
+  else if(((mode == 0) && (intvec_length < MTLK_COC_PW_ANT_CFG_PARAMS))) {
     ELOG_DD("Incorrect vector configuration: <enable mode %u> and length %u", mode, intvec_length);
   }
   else if(mode) { /* auto */
-    ELOG_V("CoC auto mode not available");
-    /* return MTLK_ERR_OK; */     /* was: available */
+    res = MTLK_ERR_OK;
   }
   else { /* manual */
     num_tx_ant = intvec[1];
@@ -2596,11 +2623,23 @@ _mtlk_df_user_get_coc_antenna_params_by_intvec (const uint32 *intvec, uint16 int
     if ((num_tx_ant == 0) || (num_rx_ant == 0)) {
       ELOG_V("Incorrect vector configuration: CoC manual mode and zero antennas");
     } else {
-      antenna_params->num_tx_antennas = num_tx_ant;
-      antenna_params->num_rx_antennas = num_rx_ant;
+      power_params->antenna_params.num_tx_antennas = num_tx_ant;
+      power_params->antenna_params.num_rx_antennas = num_rx_ant;
 
       res = MTLK_ERR_OK;
     }
+  }
+
+  power_params->is_auto_mode = mode;
+
+  if (MTLK_ERR_OK != res)
+      return res;
+
+  if (intvec_length > MTLK_COC_PW_ANT_CFG_PARAMS) { /* optional */
+    power_params->nof_ant_masks = intvec_length - MTLK_COC_PW_ANT_CFG_PARAMS;
+    res = _mtlk_df_user_get_coc_power_ant_mask_params_by_intvec(
+              intvec + MTLK_COC_PW_ANT_CFG_PARAMS,
+              power_params->nof_ant_masks, &power_params->ant_mask_params);
   }
 
   return res;
@@ -2613,20 +2652,14 @@ _mtlk_df_user_get_coc_auto_params_by_intvec (const uint32 *intvec, uint16 intvec
 
   memset(auto_params, 0, sizeof(mtlk_coc_auto_cfg_t));
 
-  if (intvec_length != 10) { /* TODO: variable vector length ? */
-    ELOG_D("Incorrect vector length. length(%u)", intvec_length);
-  }
-  else {
-    auto_params->interval_1x1   = intvec[0];
-    auto_params->interval_2x2   = intvec[1];
-    auto_params->interval_3x3   = intvec[2];
-    auto_params->interval_4x4   = intvec[3];
-    auto_params->high_limit_1x1 = intvec[4];
-    auto_params->low_limit_2x2  = intvec[5];
-    auto_params->high_limit_2x2 = intvec[6];
-    auto_params->low_limit_3x3  = intvec[7];
-    auto_params->high_limit_3x3 = intvec[8];
-    auto_params->low_limit_4x4  = intvec[9];
+  /* Check num of params only. All the values will be validated later */
+  if ((intvec_length < MTLK_COC_AUTO_MIN_CFG_PARAMS) ||
+      (intvec_length > MTLK_COC_AUTO_MAX_CFG_PARAMS)) {
+    ELOG_DDD("Incorrect vector length %u, expected %u...%u",
+             intvec_length, MTLK_COC_AUTO_MIN_CFG_PARAMS, MTLK_COC_AUTO_MAX_CFG_PARAMS);
+  } else {
+    wave_wordcpy(auto_params->values, ARRAY_SIZE(auto_params->values), intvec, intvec_length);
+    auto_params->params_count = intvec_length;
     res = MTLK_ERR_OK;
   }
 
@@ -3006,12 +3039,11 @@ _mtlk_df_user_get_scan_params_bg_by_intvec(const uint32 *intvec, uint32 intvec_l
 {
   int res = MTLK_ERR_PARAMS;
 
-  if (intvec_length != NUM_IWPRIV_SCAN_PARAMS_BG)
-  {
+  if (intvec_length != NUM_IWPRIV_SCAN_PARAMS_BG) {
     ELOG_DD("%i parameters given but %i are needed", intvec_length, NUM_IWPRIV_SCAN_PARAMS_BG);
-  }
-  else
-  {
+  } else if (intvec[4] == 0) {
+    ELOG_V("num channels in chunk must be greater than 0");
+  } else {
     scan_params_bg->passive_scan_time   = intvec[0];
     scan_params_bg->active_scan_time    = intvec[1];
     scan_params_bg->num_probe_reqs      = intvec[2];
@@ -3775,14 +3807,14 @@ _df_user_get_intvec_by_ax_default_params (uint32 *data_out, uint16 max_length,
   *data_out_len = i;
 }
 
-#define MTLK_ERP_CFG_SIZE           4
+#define MTLK_ERP_CFG_SIZE           10
 #define MLTK_ERP_MIN_INIT_WAIT_TIME 1                           /* 1 second */
 #define MLTK_ERP_MAX_INIT_WAIT_TIME (MTLK_OSAL_SEC_IN_MIN * 10) /* 10 minutes */
-#define MTLK_ERP_MIN_ON_OFF_TIME    100                         /* milliseconds */
+#define MTLK_ERP_MIN_ON_OFF_TIME    10                          /* milliseconds */
 #define MTLK_ERP_MAX_ON_OFF_TIME    MTLK_OSAL_MSEC_IN_SEC       /* 1 second */
 
 static int
-_mtlk_df_user_get_erp_cfg_by_intvec (uint32 *intvec, uint16 length, mtlk_erp_cfg_t *erp_cfg)
+_mtlk_df_user_get_erp_cfg_by_intvec (uint32 *intvec, uint16 length, mtlk_coc_erp_cfg_t *erp_cfg)
 {
   int res = MTLK_ERR_PARAMS;
 
@@ -3791,10 +3823,16 @@ _mtlk_df_user_get_erp_cfg_by_intvec (uint32 *intvec, uint16 length, mtlk_erp_cfg
     return res;
   }
 
-  erp_cfg->initial_wait_time = intvec[0];
-  erp_cfg->radio_off_time    = intvec[1];
+  erp_cfg->erp_enabled       = intvec[0];
+  erp_cfg->initial_wait_time = intvec[1];
   erp_cfg->radio_on_time     = intvec[2];
-  erp_cfg->erp_enabled       = (uint8)intvec[3];
+  erp_cfg->radio_off_time    = intvec[3];
+  erp_cfg->max_num_sta       = intvec[4];
+  erp_cfg->rx_tp_max         = intvec[5];
+  erp_cfg->tx_20_max_tp      = intvec[6];
+  erp_cfg->tx_40_max_tp      = intvec[7];
+  erp_cfg->tx_80_max_tp      = intvec[8];
+  erp_cfg->tx_160_max_tp     = intvec[9];
 
   if (erp_cfg->initial_wait_time < MLTK_ERP_MIN_INIT_WAIT_TIME ||
       erp_cfg->initial_wait_time > MLTK_ERP_MAX_INIT_WAIT_TIME) {
@@ -3824,6 +3862,26 @@ _mtlk_df_user_get_erp_cfg_by_intvec (uint32 *intvec, uint16 length, mtlk_erp_cfg
   }
 
   return MTLK_ERR_OK;
+}
+
+static void
+_mtlk_df_user_get_erp_intvec_by_cfg (uint32 *intvec, uint16 max_length, uint16 *intvec_lenth, const mtlk_coc_erp_cfg_t *erp_cfg)
+{
+
+  MTLK_ASSERT(max_length >= 10);
+
+  intvec[0] = erp_cfg->erp_enabled;
+  intvec[1] = erp_cfg->initial_wait_time;
+  intvec[2] = erp_cfg->radio_on_time;
+  intvec[3] = erp_cfg->radio_off_time;
+  intvec[4] = erp_cfg->max_num_sta;
+  intvec[5] = erp_cfg->rx_tp_max;
+  intvec[6] = erp_cfg->tx_20_max_tp;
+  intvec[7] = erp_cfg->tx_40_max_tp;
+  intvec[8] = erp_cfg->tx_80_max_tp;
+  intvec[9] = erp_cfg->tx_160_max_tp;
+  *intvec_lenth = 10;
+
 }
 
 static void
@@ -4373,13 +4431,16 @@ _mtlk_df_user_iwpriv_get_param(mtlk_df_user_t* df_user, uint32 param_id, char* d
 
 
     _DF_USER_GET_ON_PARAM(PRM_ID_COC_POWER_MODE, WAVE_RADIO_REQ_GET_COC_CFG, FALSE, mtlk_coc_mode_cfg_t, coc_cfg)
-      MTLK_CFG_GET_ITEM(coc_cfg, is_auto_mode, *(uint32*)data);
-      MTLK_CFG_GET_ITEM_BY_FUNC_VOID(coc_cfg, antenna_params, _mtlk_df_user_get_intvec_by_antenna_params,
-                                     ((uint32*)data, max_length, length, &coc_cfg->antenna_params));
+      MTLK_CFG_GET_ITEM_BY_FUNC_VOID(coc_cfg, power_params, _mtlk_df_user_get_intvec_by_coc_power_params,
+                                     ((uint32*)data, max_length, length, &coc_cfg->power_params));
 
     _DF_USER_GET_ON_PARAM(PRM_ID_COC_AUTO_PARAMS, WAVE_RADIO_REQ_GET_COC_CFG, FALSE, mtlk_coc_mode_cfg_t, coc_cfg)
       MTLK_CFG_GET_ITEM_BY_FUNC_VOID(coc_cfg, auto_params, _mtlk_df_user_get_intvec_by_auto_params,
                                      ((uint32*)data, max_length, length, &coc_cfg->auto_params));
+
+    _DF_USER_GET_ON_PARAM(PRM_ID_ERP, WAVE_RADIO_REQ_GET_ERP_CFG, FALSE, mtlk_erp_mode_cfg_t, erp_cfg)
+      MTLK_CFG_GET_ITEM_BY_FUNC_VOID(erp_cfg, erp_cfg, _mtlk_df_user_get_erp_intvec_by_cfg,
+                                     ((uint32*)data, max_length, length, &erp_cfg->erp_cfg));
 
 #ifdef CPTCFG_IWLWAV_PMCU_SUPPORT
     _DF_USER_GET_ON_PARAM(PRM_ID_PCOC_POWER_MODE, WAVE_RADIO_REQ_GET_PCOC_CFG, FALSE, mtlk_pcoc_mode_cfg_t, pcoc_cfg)
@@ -4451,6 +4512,9 @@ _mtlk_df_user_iwpriv_get_param(mtlk_df_user_t* df_user, uint32 param_id, char* d
 
     _DF_USER_GET_ON_PARAM(PRM_ID_SCAN_EXP_TIME, WAVE_RADIO_REQ_GET_SCAN_AND_CALIB_CFG, FALSE, mtlk_scan_and_calib_cfg_t, scan_and_calib_cfg)
       MTLK_CFG_GET_ITEM(scan_and_calib_cfg, scan_expire_time, *(uint32*)data);
+
+    _DF_USER_GET_ON_PARAM(PRM_ID_OUT_OF_SCAN_CACHING, WAVE_RADIO_REQ_GET_SCAN_AND_CALIB_CFG, FALSE, mtlk_scan_and_calib_cfg_t, scan_and_calib_cfg)
+      MTLK_CFG_GET_ITEM(scan_and_calib_cfg, out_of_scan_cache, *(int*)data);
 
     /* Aggregation-Rate Limit processing */
     _DF_USER_GET_ON_PARAM(PRM_ID_AGG_RATE_LIMIT, WAVE_RADIO_REQ_GET_AGG_RATE_LIMIT, FALSE, mtlk_agg_rate_limit_cfg_t, agg_rate_limit_cfg)
@@ -4657,6 +4721,13 @@ _mtlk_df_user_iwpriv_get_param(mtlk_df_user_t* df_user, uint32 param_id, char* d
     _DF_USER_GET_ON_PARAM(PRM_ID_ZWDFS_ANT_CONFIG, WAVE_HW_REQ_GET_ZWDFS_ANT, FALSE, wave_ui_mode_t, cfg)
       MTLK_CFG_GET_ITEM(cfg, mode, *(uint32*)data);
 
+    _DF_USER_GET_ON_PARAM(PRM_ID_RTS_THRESHOLD, WAVE_RADIO_REQ_GET_RTS_THRESHOLD, FALSE, mtlk_wlan_rts_threshold_cfg_t, mtlk_wlan_rts_threshold_cfg)
+       MTLK_CFG_GET_ITEM(mtlk_wlan_rts_threshold_cfg, threshold, *(uint32*)data);
+
+    /* AP Retry Limit processing */
+    _DF_USER_GET_ON_PARAM(PRM_ID_AP_RETRY_LIMIT, WAVE_RADIO_REQ_GET_AP_RETRY_LIMIT, FALSE, wave_ui_uchar_param_t, cfg)
+      MTLK_CFG_GET_ITEM(cfg, param, *(uint32*)data);
+
   _DF_USER_GET_PARAM_MAP_END()
 
   return res;
@@ -4814,13 +4885,16 @@ _mtlk_df_user_iwpriv_set_param(mtlk_df_user_t* df_user, uint32 param_id, char* d
       MTLK_CFG_SET_ITEM_BY_FUNC(hstdb_cfg, address, _mtlk_df_user_fill_ether_address, (&hstdb_cfg->address, (struct sockaddr*)data), res);
 
     _DF_USER_SET_ON_PARAM(PRM_ID_COC_POWER_MODE, WAVE_RADIO_REQ_SET_COC_CFG, FALSE, mtlk_coc_mode_cfg_t, coc_cfg)
-      MTLK_CFG_SET_ITEM(coc_cfg, is_auto_mode, *(uint32*)data);
-      MTLK_CFG_SET_ITEM_BY_FUNC(coc_cfg, antenna_params,
-                                _mtlk_df_user_get_coc_antenna_params_by_intvec, ((uint32*)data, length, &coc_cfg->antenna_params), res);
+      MTLK_CFG_SET_ITEM_BY_FUNC(coc_cfg, power_params,
+                                _mtlk_df_user_get_coc_power_params_by_intvec, ((uint32*)data, length, &coc_cfg->power_params), res);
 
     _DF_USER_SET_ON_PARAM(PRM_ID_COC_AUTO_PARAMS, WAVE_RADIO_REQ_SET_COC_CFG, FALSE, mtlk_coc_mode_cfg_t, coc_cfg)
       MTLK_CFG_SET_ITEM_BY_FUNC(coc_cfg, auto_params,
                                 _mtlk_df_user_get_coc_auto_params_by_intvec, ((uint32*)data, length, &coc_cfg->auto_params), res);
+
+    _DF_USER_SET_ON_PARAM(PRM_ID_ERP, WAVE_RADIO_REQ_SET_ERP_CFG, FALSE, mtlk_erp_mode_cfg_t, erp_cfg)
+      MTLK_CFG_SET_ITEM_BY_FUNC(erp_cfg, erp_cfg,
+                                _mtlk_df_user_get_erp_cfg_by_intvec, ((uint32*)data, length, &erp_cfg->erp_cfg), res);
 
 #ifdef CPTCFG_IWLWAV_PMCU_SUPPORT
     _DF_USER_SET_ON_PARAM(PRM_ID_PCOC_POWER_MODE, WAVE_RADIO_REQ_SET_PCOC_CFG, FALSE, mtlk_pcoc_mode_cfg_t, pcoc_cfg)
@@ -4904,6 +4978,9 @@ _mtlk_df_user_iwpriv_set_param(mtlk_df_user_t* df_user, uint32 param_id, char* d
 
     _DF_USER_SET_ON_PARAM(PRM_ID_SCAN_EXP_TIME, WAVE_RADIO_REQ_SET_SCAN_AND_CALIB_CFG, FALSE, mtlk_scan_and_calib_cfg_t, scan_and_calib_cfg)
       MTLK_CFG_SET_ITEM(scan_and_calib_cfg, scan_expire_time, *(uint32*)data);
+
+    _DF_USER_SET_ON_PARAM(PRM_ID_OUT_OF_SCAN_CACHING, WAVE_RADIO_REQ_SET_SCAN_AND_CALIB_CFG, FALSE, mtlk_scan_and_calib_cfg_t, scan_and_calib_cfg)
+      MTLK_CFG_SET_ITEM(scan_and_calib_cfg, out_of_scan_cache, *(int*)data);
 
     _DF_USER_SET_ON_PARAM(PRM_ID_11H_EMULATE_RADAR_DETECTION, WAVE_RADIO_REQ_SET_SCAN_AND_CALIB_CFG, FALSE, mtlk_scan_and_calib_cfg_t, scan_and_calib_cfg)
       MTLK_CFG_SET_ITEM_BY_FUNC(scan_and_calib_cfg, rbm,
@@ -5038,11 +5115,6 @@ _mtlk_df_user_iwpriv_set_param(mtlk_df_user_t* df_user, uint32 param_id, char* d
       MTLK_CFG_SET_ITEM_BY_FUNC(fixed_ltf_and_gi, fixed_ltf_and_gi_params, _mtlk_df_user_fill_fixed_ltf_and_gi_by_intvec,
                                          ((uint32*)data, length, &fixed_ltf_and_gi->fixed_ltf_and_gi_params), res);
 
-    /* Effective radiated power */
-    _DF_USER_SET_ON_PARAM(PRM_ID_ERP, WAVE_RADIO_REQ_SET_MASTER_CFG, FALSE, mtlk_master_core_cfg_t, master_core_cfg)
-      MTLK_CFG_SET_ITEM_BY_FUNC(master_core_cfg, erp_cfg, _mtlk_df_user_get_erp_cfg_by_intvec,
-                                ((uint32*)data, length, &master_core_cfg->erp_cfg), res);
-
     /* Dynamic Multicast Rate */
     _DF_USER_SET_ON_PARAM(PRM_ID_FAST_DYNAMIC_MC_RATE, WAVE_RADIO_REQ_SET_MASTER_CFG, FALSE, mtlk_master_core_cfg_t, master_core_cfg)
       MTLK_CFG_SET_ITEM(master_core_cfg, dynamic_mc_rate, *(uint32*)data);
@@ -5079,6 +5151,10 @@ _mtlk_df_user_iwpriv_set_param(mtlk_df_user_t* df_user, uint32 param_id, char* d
     /* ZWDFS Antenna Configuration */
     _DF_USER_SET_ON_PARAM(PRM_ID_ZWDFS_ANT_CONFIG, WAVE_HW_REQ_SET_ZWDFS_ANT, FALSE, wave_ui_mode_t, cfg)
       MTLK_CFG_SET_ITEM(cfg, mode, !!(*(uint32*)data)); /* 0 or 1 */
+
+    /* AP retry configuration */
+    _DF_USER_SET_ON_PARAM(PRM_ID_AP_RETRY_LIMIT, WAVE_RADIO_REQ_SET_AP_RETRY_LIMIT, FALSE, wave_ui_uchar_param_t, cfg)
+      MTLK_CFG_SET_ITEM(cfg, param, (*(uint32*)data));
 
     _DF_USER_SET_PARAM_MAP_END()
 
@@ -5117,17 +5193,6 @@ _mtlk_df_user_get_dcdp_linux_stat (mtlk_df_user_t *df_user, struct rtnl_link_sta
 }
 
 /* Relevant only for AP role interfaces */
-static void
-_mtlk_df_user_get_stats (struct net_device *ndev, struct rtnl_link_stats64 *stats)
-{
-  mtlk_df_user_t *df_user;
-
-  df_user = mtlk_df_user_from_ndev(ndev);
-  MTLK_ASSERT(df_user);
-
-  mtlk_df_user_get_stats(df_user, stats);
-}
-
 void __MTLK_IFUNC
 mtlk_df_user_get_stats(mtlk_df_user_t *df_user, struct rtnl_link_stats64 *stats)
 {
@@ -5172,14 +5237,6 @@ mtlk_df_user_get_stats(mtlk_df_user_t *df_user, struct rtnl_link_stats64 *stats)
       }
   }
 }
-#if LINUX_VERSION_IS_LESS(4,11,0)
-/* Just declare it here to keep sparse happy */
-struct rtnl_link_stats64 * bp__mtlk_df_user_get_stats(struct net_device *dev, struct rtnl_link_stats64 *stats);
-struct rtnl_link_stats64 *bp__mtlk_df_user_get_stats(struct net_device *dev, struct rtnl_link_stats64 *stats) {
-  _mtlk_df_user_get_stats(dev, stats);
-  return stats;
-}
-#endif
 
 static void __MTLK_IFUNC
 _mtlk_df_poll_stats_clb(mtlk_handle_t user_context,

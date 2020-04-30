@@ -963,6 +963,10 @@ _mtlk_mc_add_sta_to_group_unlocked_ip4 (mtlk_core_t *nic, const IEEE_ADDR *sta_a
     grp->info.mode = mode;
     /* Request a new group index from HW table. */
     grp->info.grp_id = mtlk_core_mcast_handle_grid(nic, &grp_mc_addr, MTLK_GRID_ADD, MCAST_GROUP_UNDEF);
+    if (MCAST_GROUP_UNDEF == grp->info.grp_id) {
+      _mtlk_mc_del_ip4_grp(mcast, grp);
+      goto end;
+    }
   }
 
   /* STEP 2a: add STA to a common list */
@@ -1347,6 +1351,10 @@ _mtlk_mc_add_sta_to_group_unlocked_ip6 (mtlk_core_t *nic, const IEEE_ADDR *sta_a
     grp->info.mode = mode;
     /* Request a new group index from HW table. */
     grp->info.grp_id = mtlk_core_mcast_handle_grid(nic, &grp_mc_addr, MTLK_GRID_ADD, MCAST_GROUP_UNDEF);
+    if (MCAST_GROUP_UNDEF == grp->info.grp_id) {
+      _mtlk_mc_del_ip6_grp(mcast, grp);
+      goto end;
+    }
   }
 
   /* STEP 2a: add STA to a common list */
@@ -1909,7 +1917,11 @@ mtlk_mc_update_stadb (mtlk_core_t *nic, mtlk_core_ui_mc_update_sta_db_t *req)
 
         /* Update group index in HW table. */
         src->info.grp_id = mtlk_core_mcast_handle_grid(nic, &req->mc_addr, MTLK_GRID_ADD, req->grp_id);
-        if (MCAST_GROUP_UNDEF == src->info.grp_id) goto end;
+        if (MCAST_GROUP_UNDEF == src->info.grp_id) {
+          _mtlk_mc_del_ip4_src(src);
+          _mtlk_mc_del_ip4_grp(&nic->mcast, grp);
+          goto end;
+        }
       } else {
         ILOG1_D("Found source IPv4:%B",   htonl(src->ip4_src_addr.s_addr));
       }
@@ -1968,7 +1980,11 @@ mtlk_mc_update_stadb (mtlk_core_t *nic, mtlk_core_ui_mc_update_sta_db_t *req)
 
         /* Update group index in HW table. */
         src->info.grp_id = mtlk_core_mcast_handle_grid(nic, &req->mc_addr, MTLK_GRID_ADD, req->grp_id);
-        if (MCAST_GROUP_UNDEF == src->info.grp_id) goto end;
+        if (MCAST_GROUP_UNDEF == src->info.grp_id) {
+          _mtlk_mc_del_ip6_src(src);
+          _mtlk_mc_del_ip6_grp(&nic->mcast, grp);
+          goto end;
+        }
       } else {
         ILOG1_K("Found source IPv6:%K",   src->ip6_src_addr.s6_addr);
       }

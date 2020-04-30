@@ -371,7 +371,7 @@ _mtlk_pcieg6_ccr_read_uram_version(void *ccr_mem)
 BOOL __MTLK_IFUNC   wave_hw_radio_band_cfg_is_single (mtlk_hw_t *hw);
 
 static int
-_mtlk_pcieg6_ccr_get_size_fw_dump_info (void *ccr_mem)
+_mtlk_pcieg6_ccr_get_size_fw_dump_info (void *ccr_mem, wave_fw_dump_info_t *fw_info)
 {
   _mtlk_pcieg6_ccr_t *pcieg6_mem = (_mtlk_pcieg6_ccr_t *)ccr_mem;
   int size = ARRAY_SIZE(g6_proc_fw_dump_files);
@@ -380,27 +380,27 @@ _mtlk_pcieg6_ccr_get_size_fw_dump_info (void *ccr_mem)
 
   /* Size of the B0_TEST_BUS file depends on Single/Dual band mode */
   if (wave_hw_radio_band_cfg_is_single(pcieg6_mem->hw)) {
-    g6_proc_fw_dump_files[G6_FW_IDX_B0_TEST_BUS].io_size = TEST_BUS_SINGLE_BAND_SIZE;
+    fw_info[G6_FW_IDX_B0_TEST_BUS].io_size = TEST_BUS_SINGLE_BAND_SIZE;
     size = G6_FW_IDX_B0_LAST;
   } else {
-    g6_proc_fw_dump_files[G6_FW_IDX_B0_TEST_BUS].io_size = TEST_BUS_DUAL_BAND_SIZE;
+    fw_info[G6_FW_IDX_B0_TEST_BUS].io_size = TEST_BUS_DUAL_BAND_SIZE;
     size = G6_FW_IDX_B1_LAST;
   }
 
   /* Set size to 0 for files which are unsupported by dummy phy */
   /* FIXME: what about PDXP (Emulation) with real PHY ? */
   if (wave_hw_mmb_card_is_phy_dummy(pcieg6_mem->hw)) {
-    g6_proc_fw_dump_files[G6_FW_IDX_B0_TEST_BUS].io_size  = 0;
-    g6_proc_fw_dump_files[G6_FW_IDX_B1_TEST_BUS].io_size  = 0;
-    g6_proc_fw_dump_files[G6_FW_IDX_B0_PHY_RX_TD_REG096].io_size = 0;
-    g6_proc_fw_dump_files[G6_FW_IDX_B1_PHY_RX_TD_REG096].io_size = 0;
+    fw_info[G6_FW_IDX_B0_TEST_BUS].io_size  = 0;
+    fw_info[G6_FW_IDX_B1_TEST_BUS].io_size  = 0;
+    fw_info[G6_FW_IDX_B0_PHY_RX_TD_REG096].io_size = 0;
+    fw_info[G6_FW_IDX_B1_PHY_RX_TD_REG096].io_size = 0;
   }
 
   /* Different size of DESC_RAM */
   if (wave_hw_mmb_card_is_asic(pcieg6_mem->hw)) {
-    g6_proc_fw_dump_files[G6_FW_IDX_DESC_RAM].io_size = DESCRIPTOR_RAM_SIZE;
+    fw_info[G6_FW_IDX_DESC_RAM].io_size = DESCRIPTOR_RAM_SIZE;
   } else { /* non ASIC */
-    g6_proc_fw_dump_files[G6_FW_IDX_DESC_RAM].io_size = REDUCED_DESCRIPTOR_RAM_SIZE;
+    fw_info[G6_FW_IDX_DESC_RAM].io_size = REDUCED_DESCRIPTOR_RAM_SIZE;
   }
 
   return size;
@@ -409,10 +409,21 @@ _mtlk_pcieg6_ccr_get_size_fw_dump_info (void *ccr_mem)
 static int
 _mtlk_pcieg6_ccr_get_fw_dump_info (void *ccr_mem, wave_fw_dump_info_t **fw_info)
 {
-  MTLK_ASSERT(NULL != fw_info);
+  size_t alloc_size = 0;
 
-  *fw_info = &g6_proc_fw_dump_files[0];
-  return _mtlk_pcieg6_ccr_get_size_fw_dump_info(ccr_mem);
+  MTLK_ASSERT(NULL != fw_info);
+  MTLK_ASSERT(NULL == *fw_info);
+
+  alloc_size = sizeof(g6_proc_fw_dump_files);
+  *fw_info = mtlk_osal_mem_alloc(alloc_size, LQLA_MEM_TAG_FW_RECOVERY);
+  if (*fw_info == NULL) {
+    ELOG_V("Failed to alloc memory for fw_info");
+    return MTLK_ERR_NO_MEM;
+  }
+
+  wave_memcpy(*fw_info, alloc_size, &g6_proc_fw_dump_files[0], sizeof(g6_proc_fw_dump_files));
+
+  return _mtlk_pcieg6_ccr_get_size_fw_dump_info(ccr_mem, *fw_info);
 }
 
 static int
@@ -786,7 +797,7 @@ static void _mtlk_pcieg6_reset_mac(void *ccr_mem)
 
   ILOG0_PD("Reset WLAN SOC: address is 0x%p, value=0x%08x", SOC_REGS_SOFT_RESET, G6_WLAN_SW_RESET);
   __ccr_mem_resetl(ccr_mem, SOC_REGS_SOFT_RESET, G6_WLAN_SW_RESET);
-  mtlk_osal_msleep(10);
+  mtlk_osal_msleep(20);
 
 #ifdef  DEBUG_CCR_CHECK_REGISTERS
   debug_read_registers(ccr_mem, "AFTER_RST");
@@ -2069,7 +2080,7 @@ _mtlk_pcieg6_efuse_read_data (void *ccr_mem, void *buf, uint32 addr, uint32 size
     /* Read the value from the eFuse data register */
 
     _CCR_READ_REG_VALUE_(ccr_mem, SOC_REGS_EFUSE_DATA, word);
-    words[word_num] = __swab32(word); /* bytes reordering */
+    words[word_num] = HOST_TO_MAC32(word); /* bytes reordering */
     ILOG1_DDD("eFuse[%2u] = 0x%08X (0x%08X)", word_num, words[word_num], word);
   }
 

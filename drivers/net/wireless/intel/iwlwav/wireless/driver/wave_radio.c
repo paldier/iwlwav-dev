@@ -221,6 +221,7 @@ struct _wave_radio_t {
   mtlk_pdb_t            *param_db;
   struct _mtlk_abmgr_t  *abmgr;
   mtlk_coc_t            *coc_mgmt;
+  mtlk_erp_t            *erp_mgmt;
 
   UMI_HDK_CONFIG        current_hdkconfig; /* the currently in effect hdkconfig */
   mtlk_scan_support_t   scan_support;
@@ -249,6 +250,7 @@ struct _wave_radio_t {
   g52_160_ch_tab_t      g52_160_ch_tab;
   uint8                 calib_done_mask[1 + NUM_TOTAL_CHANS]; /* 0th entry not used */
   BOOL                  is_sync_hostapd_done; /* indicates that STA DB is synchronous in driver and hostapd */
+  BOOL                  cac_pending;
   MTLK_DECLARE_INIT_STATUS;
   MTLK_DECLARE_START_STATUS;
 };
@@ -283,6 +285,7 @@ MTLK_START_STEPS_LIST_BEGIN(wave_radio)
   MTLK_START_STEPS_LIST_ENTRY(wave_radio, WAVE_RADIO_SCAN_INIT)
   MTLK_START_STEPS_LIST_ENTRY(wave_radio, WAVE_RADIO_CHANDEF_INIT)
   MTLK_START_STEPS_LIST_ENTRY(wave_radio, WAVE_RADIO_COC_INIT)
+  MTLK_START_STEPS_LIST_ENTRY(wave_radio, WAVE_RADIO_ERP_INIT)
 MTLK_START_INNER_STEPS_BEGIN(wave_radio)
 MTLK_START_STEPS_LIST_END(wave_radio);
 
@@ -394,9 +397,10 @@ static int _wave_radio_master_vap_create(wave_radio_t *radio, mtlk_work_role_e r
   /* re-use existing master VAP index if such exists */
   _vap_index = mtlk_vap_manager_get_master_vap_index(radio->vap_manager);
   if (_vap_index == MTLK_VAP_INVALID_IDX) {
-    res = mtlk_vap_manager_get_free_vap_index(radio->vap_manager, &_vap_index);
+    _vap_index = wave_radio_master_vap_id_get(radio);
+    res = mtlk_vap_manager_check_free_vap_index(radio->vap_manager, _vap_index);
     if (MTLK_ERR_OK != res) {
-      ELOG_V("No free slot for new VAP");
+      ELOG_V("No free slot for master VAP");
       return res;
     }
   }
@@ -447,31 +451,72 @@ static int _wave_radio_chandef_init(wave_radio_t *radio)
 
 static int _wave_radio_coc_init(wave_radio_t *radio)
 {
-  mtlk_core_t* master_core = mtlk_vap_manager_get_master_core(radio->vap_manager);
-  mtlk_txmm_t *txmm = mtlk_vap_get_txmm(master_core->vap_handle);
-  mtlk_coc_cfg_t  coc_cfg;
+  mtlk_core_t       *master_core = mtlk_vap_manager_get_master_core(radio->vap_manager);
+  mtlk_txmm_t       *txmm = mtlk_vap_get_txmm(master_core->vap_handle);
+  wave_ant_params_t *ant_params = radio->ant_params;
+  mtlk_coc_cfg_t     coc_cfg;
 
-  coc_cfg.hw_antenna_cfg.num_tx_antennas = master_core->slow_ctx->tx_limits.num_tx_antennas;
-  coc_cfg.hw_antenna_cfg.num_rx_antennas = master_core->slow_ctx->tx_limits.num_rx_antennas;
-  coc_cfg.default_auto_cfg.interval_1x1 = 10; /* 1s */
-  coc_cfg.default_auto_cfg.interval_2x2 = 50; /* 5s */
-  coc_cfg.default_auto_cfg.interval_3x3 = 50; /* 5s */
-  coc_cfg.default_auto_cfg.interval_4x4 = 50; /* 5s */
-  coc_cfg.default_auto_cfg.high_limit_1x1 = 1000;  /* byte/sec */
-  coc_cfg.default_auto_cfg.low_limit_2x2 =  5000;  /* byte/sec */
-  coc_cfg.default_auto_cfg.high_limit_2x2 = 5000;  /* byte/sec */
-  coc_cfg.default_auto_cfg.low_limit_3x3 =  5000;  /* byte/sec */
-  coc_cfg.default_auto_cfg.high_limit_3x3 = 5000;  /* byte/sec */
-  coc_cfg.default_auto_cfg.low_limit_4x4 =  5000;  /* byte/sec */
+  coc_cfg.hw_antenna_cfg.num_tx_antennas = ant_params->tx_ant_num;
+  coc_cfg.hw_antenna_cfg.num_rx_antennas = ant_params->rx_ant_num;
+  coc_cfg.hw_ant_mask                    = ant_params->tx_ant_mask; /* TX/RX */
+
+  /* time intervals in 100 ms units */
+  coc_cfg.default_auto_cfg.starting_time = 300; /* 30s */
+  coc_cfg.default_auto_cfg.interval_1x1  = 10; /* 1s */
+  coc_cfg.default_auto_cfg.interval_2x2  = 10; /* 1s */
+  coc_cfg.default_auto_cfg.interval_3x3  = 10; /* 1s */
+  coc_cfg.default_auto_cfg.interval_4x4  = 40; /* 4s */
+
+  /* limits in 0.1 percent units */
+  coc_cfg.default_auto_cfg.high_limit_1x1 = 250;
+  coc_cfg.default_auto_cfg.low_limit_2x2  = 500;
+  coc_cfg.default_auto_cfg.high_limit_2x2 = 300;
+  coc_cfg.default_auto_cfg.low_limit_3x3  = 500;
+  coc_cfg.default_auto_cfg.high_limit_3x3 = 300;
+  coc_cfg.default_auto_cfg.low_limit_4x4  = 400;
+
+  /* RSSI */
+  coc_cfg.default_auto_cfg.low_rssi_2x2   = -66;
+  coc_cfg.default_auto_cfg.low_rssi_3x3   = -69;
+  coc_cfg.default_auto_cfg.low_rssi_4x4   = -72;
+
   coc_cfg.txmm = txmm;
   coc_cfg.vap_handle = master_core->vap_handle;
   radio->coc_mgmt = mtlk_coc_create(&coc_cfg);
   return (NULL != radio->coc_mgmt) ? MTLK_ERR_OK : MTLK_ERR_UNKNOWN;
 }
 
+static int _wave_radio_erp_init(wave_radio_t *radio)
+{
+  mtlk_core_t* master_core = mtlk_vap_manager_get_master_core(radio->vap_manager);
+  mtlk_txmm_t *txmm = mtlk_vap_get_txmm(master_core->vap_handle);
+  mtlk_coc_erp_cfg_t  erp_cfg;
+
+  erp_cfg.erp_enabled = 0;
+  erp_cfg.initial_wait_time = 20; /* 10 seconds */
+  erp_cfg.radio_on_time     = 30;
+  erp_cfg.radio_off_time    = 70;
+  erp_cfg.max_num_sta       = 2;
+  erp_cfg.rx_tp_max         =  400000; /* bytes/sec */
+  erp_cfg.tx_20_max_tp      =  400000; /* bytes/sec */
+  erp_cfg.tx_40_max_tp      = 1250000; /* bytes/sec */
+  erp_cfg.tx_80_max_tp      = 1250000; /* bytes/sec */
+  erp_cfg.tx_160_max_tp     = 1250000; /* bytes/sec */
+
+  erp_cfg.txmm = txmm;
+  erp_cfg.vap_handle = master_core->vap_handle;
+  radio->erp_mgmt = mtlk_erp_create(&erp_cfg);
+  return (NULL != radio->erp_mgmt) ? MTLK_ERR_OK : MTLK_ERR_UNKNOWN;
+}
+
 static void _wave_radio_coc_delete(wave_radio_t *radio)
 {
   return mtlk_coc_delete(radio->coc_mgmt);
+}
+
+static void _wave_radio_erp_delete(wave_radio_t *radio)
+{
+  return mtlk_erp_delete(radio->erp_mgmt);
 }
 
 static int _wave_radio_context_init(wave_radio_t *radio)
@@ -491,6 +536,7 @@ static int _wave_radio_context_init(wave_radio_t *radio)
   radio->g52_160_ch_tab.ch_width = CW_160;
 
   radio->is_sync_hostapd_done = TRUE;
+  radio->cac_pending = FALSE;
 
   radio->ee_data = NULL;
   (void)mtlk_hw_get_prop(radio->hw_api, MTLK_HW_PROP_EEPROM_DATA, &radio->ee_data, sizeof(&radio->ee_data));
@@ -553,6 +599,8 @@ static void _wave_radio_ab_unregister(wave_radio_t *radio)
 static void _wave_radio_deinit(wave_radio_t *radio)
 {
   MTLK_STOP_BEGIN(wave_radio, MTLK_OBJ_PTR(radio))
+   MTLK_STOP_STEP(wave_radio, WAVE_RADIO_ERP_INIT, MTLK_OBJ_PTR(radio),
+                  _wave_radio_erp_delete, (radio));
     MTLK_STOP_STEP(wave_radio, WAVE_RADIO_COC_INIT, MTLK_OBJ_PTR(radio),
                   _wave_radio_coc_delete, (radio));
     MTLK_STOP_STEP(wave_radio, WAVE_RADIO_CHANDEF_INIT, MTLK_OBJ_PTR(radio),
@@ -659,6 +707,8 @@ static int _wave_radio_init(wave_radio_t *radio, struct device *dev)
                     _wave_radio_chandef_init, (radio));
     MTLK_START_STEP(wave_radio, WAVE_RADIO_COC_INIT, MTLK_OBJ_PTR(radio),
                     _wave_radio_coc_init, (radio));
+    MTLK_START_STEP(wave_radio, WAVE_RADIO_ERP_INIT, MTLK_OBJ_PTR(radio),
+                    _wave_radio_erp_init, (radio));
   MTLK_START_FINALLY(wave_radio, MTLK_OBJ_PTR(radio));
   MTLK_START_RETURN(wave_radio, MTLK_OBJ_PTR(radio), _wave_radio_deinit, (radio));
 }
@@ -1090,12 +1140,11 @@ int wave_radio_beacon_change(
     return _mtlk_df_mtlk_to_linux_error_code(res);
   }
 
-  /* When master VAP is used as a dummy VAP (in order to support reconf
+  /* Master VAP is used as a dummy VAP (in order to support reconf
    * of all VAPs without having to restart hostapd) we avoid setting beacon
    * so that the dummy VAPs will not send beacons */
-  if (WAVE_RADIO_PDB_GET_INT(radio, PARAM_DB_RADIO_DISABLE_MASTER_VAP) &&
-      mtlk_vap_is_master(vap_handle)){
-    ILOG1_V("Dummy (disabled) Master VAP, not setting beacon template in FW");
+  if (mtlk_vap_is_master(vap_handle)){
+    ILOG1_V("Dummy Master VAP, not setting beacon template in FW");
     return _mtlk_df_mtlk_to_linux_error_code(res);
   }
 
@@ -1135,11 +1184,11 @@ int _wave_radio_set_ap_beacon_info(wave_radio_t *radio, struct net_device *ndev,
     goto out;
   }
 
-  if (mtlk_vap_is_master(vap_handle) && WAVE_RADIO_PDB_GET_INT(radio, PARAM_DB_RADIO_DISABLE_MASTER_VAP)) {
-    /* When master VAP is used as a dummy VAP (in order to support reconf
+  if (mtlk_vap_is_master(vap_handle)) {
+    /* Master VAP is used as a dummy VAP (in order to support reconf
      * of all VAPs without having to restart hostapd) we avoid setting beacon
      * so that the dummy VAPs will not send beacons */
-    ILOG1_V("Dummy (disabled) Master VAP, not setting ap beacon info in FW");
+    ILOG1_V("Dummy Master VAP, not setting ap beacon info in FW");
     res = MTLK_ERR_OK;
     goto out;
   }
@@ -1200,6 +1249,49 @@ wave_radio_chandef_copy (struct mtlk_chan_def *mcd, struct cfg80211_chan_def *ch
   return __wave_radio_chandef_copy(mcd, chandef);
 }
 
+int
+wave_radio_set_first_non_dfs_chandef (wave_radio_t * radio)
+{
+  struct wiphy *wiphy;
+  struct mtlk_chan_def *mcd;
+  struct ieee80211_channel *ic;
+  struct mtlk_channel *mc;
+  struct ieee80211_supported_band *band;
+  int i;
+  wiphy = wv_mac80211_wiphy_get(wave_radio_mac80211_get(radio));
+  mcd = wave_radio_chandef_get(radio);
+  ic = ieee80211_get_channel(wiphy, mcd->center_freq1);
+  if (!ic) {
+    ILOG1_V("no scan was done, no need to set channel");
+    return MTLK_ERR_UNKNOWN;
+  }
+  mc = &mcd->chan;
+  band = wiphy->bands[ic->band];
+
+  for (i=0; i < band->n_channels; i++) {
+    ic = &band->channels[i];
+    if (!(ic->flags & IEEE80211_CHAN_RADAR))
+      break;
+  }
+
+  mcd->center_freq1 = ic->center_freq;
+  mcd->center_freq2 = 0;
+  mcd->width = CW_20;
+  mcd->power_level = MTLK_POWER_NOT_SET;
+
+  mc->dfs_state_entered = ic->dfs_state_entered;
+  mc->dfs_state = ic->dfs_state;
+  mc->band = nlband2mtlkband(ic->band);
+  mc->center_freq = ic->center_freq;
+  mc->flags = ic->flags;
+  mc->orig_flags = ic->orig_flags;
+  mc->max_antenna_gain = ic->max_antenna_gain;
+  mc->max_power = ic->max_power;
+  mc->max_reg_power = ic->max_reg_power;
+  mc->dfs_cac_ms = ic->dfs_cac_ms;
+  return MTLK_ERR_OK;
+}
+
 int wave_radio_ap_start(
   struct wiphy *wiphy,
   wave_radio_t *radio,
@@ -1247,12 +1339,12 @@ int wave_radio_ap_start(
     if(mtlk_hw_type_is_gen6_d2(radio->hw_api->hw)) {
         u8 he_non_advertised[HE_NON_ADVERTISED_LEN];
         mtlk_pdb_size_t he_non_advertised_len = sizeof(he_non_advertised);
-        WAVE_RADIO_PDB_GET_BINARY(radio, PARAM_DB_RADIO_HE_NON_ADVERTISED, &he_non_advertised,
+        MTLK_CORE_PDB_GET_BINARY(nic, PARAM_DB_CORE_HE_NON_ADVERTISED, &he_non_advertised,
                                                                       &he_non_advertised_len);
         he_non_advertised[HE_NON_ADVERT_CAP3_IDX] = HE_NON_ADVERT_CAP3_D2;
         he_non_advertised[HE_NON_ADVERT_CAP9_IDX] = HE_NON_ADVERT_CAP9_D2;
-        WAVE_RADIO_PDB_SET_BINARY(radio, PARAM_DB_RADIO_HE_NON_ADVERTISED, &he_non_advertised,
-                                                                              he_non_advertised_len);
+        MTLK_CORE_PDB_SET_BINARY(nic, PARAM_DB_CORE_HE_NON_ADVERTISED, &he_non_advertised,
+                                                                      he_non_advertised_len);
     }
 
   }
@@ -1540,13 +1632,14 @@ int wave_radio_qos_map_set(wave_radio_t *radio, struct net_device *ndev, struct 
   return _mtlk_df_mtlk_to_linux_error_code(res);
 }
 
-static void _wave_radio_antenna_params_set(uint32 tx_ant, uint32 rx_ant,
-  mtlk_coc_antenna_cfg_t* antenna_params)
+static void _wave_radio_coc_power_params_set(BOOL mode, uint32 tx_ant, uint32 rx_ant,
+  mtlk_coc_power_cfg_t* power_params)
 {
-  MTLK_ASSERT(NULL != antenna_params);
+  MTLK_ASSERT(NULL != power_params);
 
-  antenna_params->num_tx_antennas = tx_ant;
-  antenna_params->num_rx_antennas = rx_ant;
+  power_params->is_auto_mode     = mode;
+  power_params->antenna_params.num_tx_antennas = tx_ant;
+  power_params->antenna_params.num_rx_antennas = rx_ant;
 }
 
 int wave_radio_antenna_set(wave_radio_t *radio, u32 tx_ant, u32 rx_ant)
@@ -1569,10 +1662,9 @@ int wave_radio_antenna_set(wave_radio_t *radio, u32 tx_ant, u32 rx_ant)
     current->comm, current->pid);
 
   memset(&coc_cfg, 0, sizeof(coc_cfg));
-  MTLK_CFG_SET_ITEM_BY_FUNC_VOID(&coc_cfg, antenna_params,
-    _wave_radio_antenna_params_set, (count_bits_set(tx_ant), count_bits_set(rx_ant),
-      &coc_cfg.antenna_params));
-  MTLK_CFG_SET_ITEM(&coc_cfg, is_auto_mode, FALSE);
+  MTLK_CFG_SET_ITEM_BY_FUNC_VOID(&coc_cfg, power_params,
+    _wave_radio_coc_power_params_set, (FALSE, count_bits_set(tx_ant), count_bits_set(rx_ant),
+      &coc_cfg.power_params));
   res = _mtlk_df_user_invoke_core(mtlk_df_user_get_df(df_user),
     WAVE_RADIO_REQ_SET_COC_CFG, &clpb, &coc_cfg, sizeof(coc_cfg));
   res = _mtlk_df_user_process_core_retval(res, clpb, WAVE_RADIO_REQ_SET_COC_CFG,
@@ -1621,6 +1713,34 @@ int wave_radio_antenna_get(wave_radio_t *radio, u32 *tx_ant, u32 *rx_ant)
   MTLK_CLPB_END;
 
 end:
+  return _mtlk_df_mtlk_to_linux_error_code(res);
+}
+
+int wave_radio_rts_threshold_set(wave_radio_t *radio, u32 rts_threshold)
+{
+  int res = MTLK_ERR_OK;
+  mtlk_clpb_t *clpb = NULL;
+  mtlk_df_t *df;
+  mtlk_df_user_t *df_user;
+  mtlk_wlan_rts_threshold_cfg_t   rts_threshold_cfg;
+
+  MTLK_ASSERT(NULL != radio);
+
+  df = wave_radio_df_get(radio);
+  MTLK_CHECK_DF(df);
+
+  df_user = mtlk_df_get_user(df);
+  MTLK_ASSERT(NULL != df_user);
+
+  ILOG1_SSD("%s: Invoked from %s (%i)", mtlk_df_user_get_name(df_user),
+	    current->comm, current->pid);
+  MTLK_CFG_SET_ITEM(&rts_threshold_cfg, threshold, rts_threshold);
+
+  res = _mtlk_df_user_invoke_core(mtlk_df_user_get_df(df_user),
+      WAVE_RADIO_REQ_SET_RTS_THRESHOLD, &clpb, &rts_threshold_cfg, sizeof(rts_threshold_cfg));
+  res = _mtlk_df_user_process_core_retval(res, clpb, WAVE_RADIO_REQ_SET_RTS_THRESHOLD,
+      TRUE);
+
   return _mtlk_df_mtlk_to_linux_error_code(res);
 }
 
@@ -2724,6 +2844,12 @@ mtlk_coc_t *wave_radio_coc_mgmt_get(wave_radio_t *radio)
   return radio->coc_mgmt;
 }
 
+mtlk_erp_t *wave_radio_erp_mgmt_get(wave_radio_t *radio)
+{
+  MTLK_ASSERT(NULL != radio);
+  return radio->erp_mgmt;
+}
+
 void wave_radio_interfdet_set(wave_radio_t *radio, BOOL enable_flag)
 {
   MTLK_ASSERT(NULL != radio);
@@ -2895,13 +3021,14 @@ void wave_radio_limits_set(wave_radio_descr_t *radio_descr, wave_radio_limits_t 
   radio = &radio_descr->radio[0];
 
   for (i = 0; i < radio_descr->num_radios; i++, radio++) {
-    radio->limits.max_stas = radio_limits[i].max_stas;
-    radio->limits.max_vaps = radio_limits[i].max_vaps;
+    /* copy structure */
+    radio->limits = radio_limits[i];
     /* FIXME: set a non-zero max_vaps (temp solution) */
     if (0 == radio->limits.max_vaps) {
       radio->limits.max_vaps = 1;
     }
-    ILOG0_DDD("RadioID %u supports max VAPs %u max STAs %u", i, radio->limits.max_vaps, radio->limits.max_stas);
+    ILOG0_DDDD("RadioID %u supports max VAPs %u max STAs %u master VAP id %u", i,
+        radio->limits.max_vaps, radio->limits.max_stas, radio->limits.master_vap_id);
   }
 }
 
@@ -2917,6 +3044,13 @@ unsigned wave_radio_max_vaps_get(wave_radio_t *radio)
   MTLK_ASSERT(radio != NULL);
   ILOG3_DD("RadioID %u max VAPs %u", radio->idx, radio->limits.max_vaps);
   return radio->limits.max_vaps;
+}
+
+unsigned wave_radio_master_vap_id_get (wave_radio_t *radio)
+{
+  MTLK_ASSERT(radio != NULL);
+  ILOG3_DD("RadioID %u master VAP id %u", radio->idx, radio->limits.master_vap_id);
+  return radio->limits.master_vap_id;
 }
 
 BOOL __MTLK_IFUNC
@@ -4244,6 +4378,66 @@ end:
   return _mtlk_df_mtlk_to_linux_error_code(res);
 }
 
+int wave_radio_get_phy_channel_status (
+  wave_radio_t *radio,
+  struct net_device *ndev,
+  const void *data,
+  size_t data_len)
+{
+  wave_radio_phy_stat_t *radio_phy_stat;
+  mtlk_phy_channel_status phy_chan_status;
+  mtlk_df_user_t *df_user;
+  int res = MTLK_ERR_OK;
+  mtlk_clpb_t *clpb = NULL;
+  uint32 status_size;
+  mtlk_nbuf_t *rsp_nbuf;
+  void *wiphy;
+
+  wiphy = wv_mac80211_wiphy_get(radio->mac80211);
+  MTLK_ASSERT(NULL != wiphy);
+  if (NULL == wiphy) {
+    res = MTLK_ERR_UNKNOWN;
+    goto end;
+  }
+
+  df_user = mtlk_df_user_from_ndev(ndev);
+  MTLK_CHECK_DF_USER(df_user);
+
+  ILOG2_SSD("%s: Invoked from %s (%i)", ndev->name, current->comm, current->pid);
+
+  res = _mtlk_df_user_invoke_core(mtlk_df_user_get_df(df_user), WAVE_RADIO_REQ_GET_PHY_CHAN_STATUS,
+                                  &clpb, NULL, 0);
+  res = _mtlk_df_user_process_core_retval(res, clpb, WAVE_RADIO_REQ_GET_PHY_CHAN_STATUS, FALSE);
+
+  if (res != MTLK_ERR_OK)
+    goto end;
+
+  radio_phy_stat = mtlk_clpb_enum_get_next(clpb, &status_size);
+  MTLK_CLPB_TRY_EX(radio_phy_stat, status_size, sizeof(wave_radio_phy_stat_t))
+
+    phy_chan_status.ch_util = radio_phy_stat->ch_util;
+    phy_chan_status.ch_load = radio_phy_stat->ch_load;
+    phy_chan_status.noise = radio_phy_stat->noise;
+    phy_chan_status.airtime = radio_phy_stat->airtime;
+    phy_chan_status.airtime_efficiency = radio_phy_stat->airtime_efficiency;
+
+    rsp_nbuf = wv_cfg80211_vendor_cmd_alloc_reply_skb(wiphy, sizeof(phy_chan_status));
+    if (!rsp_nbuf) {
+      MTLK_CLPB_EXIT(MTLK_ERR_NO_MEM);
+    }
+
+    nla_put(rsp_nbuf, NL80211_ATTR_VENDOR_DATA, sizeof(phy_chan_status), &phy_chan_status);
+
+    mtlk_clpb_delete(clpb);
+    return wv_cfg80211_vendor_cmd_reply(rsp_nbuf);
+  MTLK_CLPB_FINALLY(res)
+    mtlk_clpb_delete(clpb);
+  MTLK_CLPB_END
+
+end:
+  return _mtlk_df_mtlk_to_linux_error_code(res);
+}
+
 int wave_radio_get_associated_dev_rate_info_rx_stats (
   wave_radio_t *radio,
   struct net_device *ndev,
@@ -4738,11 +4932,11 @@ int wave_radio_get_tr181_peer_statistics (
   int data_len)
 {
   void *wiphy;
-  u8 *addr = (u8*)data;
   mtlk_df_user_t *df_user;
   mtlk_clpb_t *clpb = NULL;
   mtlk_nbuf_t *rsp_nbuf;
   int res = MTLK_ERR_OK;
+  st_info_data_t info_data;
   mtlk_wssa_drv_tr181_peer_stats_t *tr181_stats;
   uint32 stats_size;
 
@@ -4781,8 +4975,11 @@ int wave_radio_get_tr181_peer_statistics (
     goto end;
   }
 
+  info_data.sta = NULL;
+  info_data.mac = (u8 *)data;
+  info_data.stinfo = NULL;
   res = _mtlk_df_user_invoke_core(mtlk_df_user_get_df(df_user),
-    WAVE_CORE_REQ_GET_TR181_PEER_STATS, &clpb, addr, IEEE_ADDR_LEN);
+    WAVE_CORE_REQ_GET_TR181_PEER_STATS, &clpb, &info_data, sizeof(st_info_data_t));
   res = _mtlk_df_user_process_core_retval(res, clpb,
     WAVE_CORE_REQ_GET_TR181_PEER_STATS, FALSE);
 
@@ -5312,6 +5509,7 @@ int wave_radio_he_non_advertised_get(
 {
   struct net_device *ndev;
   mtlk_df_user_t *df_user = mtlk_df_user_from_wdev(wdev);
+  mtlk_core_t *nic = mtlk_vap_get_core(mtlk_df_get_vap_handle(mtlk_df_user_get_df(df_user)));
   mtlk_nbuf_t *rsp_nbuf;
   u8 he_non_advertised[HE_NON_ADVERTISED_LEN];
   mtlk_pdb_size_t pdb_len = sizeof(he_non_advertised);
@@ -5325,7 +5523,7 @@ int wave_radio_he_non_advertised_get(
   ILOG1_SSD("%s: Invoked from %s (%i)", ndev->name, current->comm, current->pid);
   MTLK_CHECK_DF_USER(df_user);
 
-  WAVE_RADIO_PDB_GET_BINARY(radio, PARAM_DB_RADIO_HE_NON_ADVERTISED, &he_non_advertised, &pdb_len);
+  MTLK_CORE_PDB_GET_BINARY(nic, PARAM_DB_CORE_HE_NON_ADVERTISED, &he_non_advertised, &pdb_len);
 
   rsp_nbuf = wv_cfg80211_vendor_cmd_alloc_reply_skb(wiphy, HE_NON_ADVERTISED_LEN);
   if (!rsp_nbuf)
@@ -5364,4 +5562,18 @@ wave_radio_set_zwdfs_ant_config (wave_radio_t *radio, const int mode)
 {
   MTLK_ASSERT(radio != NULL);
   WAVE_RADIO_PDB_SET_INT(radio, PARAM_DB_RADIO_ZWDFS_ANT_ACTIVE, mode);
+}
+
+void __MTLK_IFUNC wave_radio_set_cac_pending (wave_radio_t *radio, BOOL state)
+{
+  MTLK_ASSERT(radio);
+
+  radio->cac_pending = state;
+}
+
+BOOL __MTLK_IFUNC wave_radio_get_cac_pending (wave_radio_t *radio)
+{
+  MTLK_ASSERT(radio);
+
+  return radio->cac_pending;
 }

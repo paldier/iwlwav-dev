@@ -531,6 +531,30 @@ static void ieee80211_del_chanctx(struct ieee80211_local *local,
 	if (!local->use_chanctx) {
 		struct cfg80211_chan_def *chandef = &local->_oper_chandef;
 		chandef->width = NL80211_CHAN_WIDTH_20_NOHT;
+		if (chandef->chan->band == NL80211_BAND_5GHZ &&
+		    chandef->chan->flags & IEEE80211_CHAN_RADAR) {
+			/* NOTE: This is needed by iwlwav driver in order to
+			 * not set a non AVAILABLE RADAR channel in FW outside
+			 * of CAC context
+			 */
+			int i;
+			struct ieee80211_supported_band *band
+				 = local->hw.wiphy->bands[NL80211_BAND_5GHZ];
+
+			if (WARN_ON(band == NULL))
+				goto cont;
+
+			for (i = 0; i < band->n_channels; i++) {
+				struct ieee80211_channel *chan;
+
+				chan = &band->channels[i];
+				if (!(chan->flags & IEEE80211_CHAN_RADAR)) {
+					chandef->chan = &band->channels[i];
+					break;
+				}
+			}
+		}
+cont:
 		chandef->center_freq1 = chandef->chan->center_freq;
 		chandef->center_freq2 = 0;
 

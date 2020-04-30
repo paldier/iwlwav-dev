@@ -805,6 +805,12 @@ __wave_core_coc_mgmt_get(struct nic *nic)
   return wave_radio_coc_mgmt_get(wave_vap_radio_get(nic->vap_handle));
 }
 
+static __INLINE mtlk_erp_t*
+__wave_core_erp_mgmt_get(struct nic *nic)
+{
+  return wave_radio_erp_mgmt_get(wave_vap_radio_get(nic->vap_handle));
+}
+
 static __INLINE UMI_HDK_CONFIG*
 __wave_core_hdkconfig_get(struct nic *nic)
 {
@@ -845,6 +851,17 @@ mtlk_core_is_in_scan_mode(struct nic *mcore)
   MTLK_ASSERT(mcore == mtlk_vap_manager_get_master_core(mtlk_vap_get_manager(mcore->vap_handle)));
 
   return (__wave_core_chan_switch_type_get(mcore) == ST_SCAN);
+}
+
+static __INLINE BOOL
+mtlk_core_is_in_oper_mode(struct nic *mcore)
+{
+  int type;
+
+  MTLK_ASSERT(mcore == mtlk_vap_manager_get_master_core(mtlk_vap_get_manager(mcore->vap_handle)));
+
+  type = __wave_core_chan_switch_type_get(mcore);
+  return (type == ST_NORMAL || type == ST_NORMAL_AFTER_RSSI);
 }
 
 /* Checks whether we really know for sure what channel we're on */
@@ -949,6 +966,7 @@ void __MTLK_IFUNC mtlk_core_on_bss_res_queued(mtlk_core_t *nic);
 void __MTLK_IFUNC mtlk_core_on_bss_res_freed(mtlk_core_t *nic);
 
 int __MTLK_IFUNC mtlk_core_set_coc_actual_power_mode(mtlk_core_t *core);
+int __MTLK_IFUNC mtlk_core_set_coc_pause_power_mode(mtlk_core_t *core);
 int __MTLK_IFUNC mtlk_core_radio_enable_if_needed(mtlk_core_t *core);
 int __MTLK_IFUNC mtlk_core_radio_disable_if_needed(mtlk_core_t *core);
 int current_chandef_init(mtlk_core_t *core, struct mtlk_chan_def *ccd);

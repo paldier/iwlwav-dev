@@ -284,6 +284,76 @@ typedef enum {
     STAT_STA_CNTR_TOTAL
 } mtlk_mhi_stat_sta_cntr_e;
 
+typedef struct twt_operation{
+    uint8 implicit;
+    uint8 announced;
+    uint8 triggerEnabled;
+    uint8 reserved;
+}twt_operation_t;
+
+typedef struct twt_individual_params{
+    uint64 wakeTime;
+    uint32 wakeInterval;
+    uint16 minWakeDuration;
+    uint16 channel;
+}twt_individual_params_t;
+
+typedef struct twt_broadcast_params_t{
+    uint32 tragetBeacon;
+    uint32 listenInterval;
+}twt_broadcast_params_t;
+
+typedef struct twt_agreement{
+    uint16 state;
+    uint16 agreementType;
+    twt_operation_t operation;
+    union {
+        twt_individual_params_t individual;
+        twt_broadcast_params_t broadcast;
+    } params;
+}twt_agreement_t;
+
+typedef struct twt_params{
+    uint32          numOfAgreementsForSta;
+    twt_agreement_t twtAgreement[TWT_MAX_AGREEMENTS_ALLOWED];
+}twt_params_t;
+
+typedef struct ul_ru_allocation{
+        uint8 subChannels;
+        uint8 type;
+} ul_ru_allocation_t;
+
+typedef struct {
+    wlanAccessCategory_t  accessCategory;
+    uint32                queueSize;
+} ul_bsr_t;
+
+typedef struct ul_mu_stats{
+        uint8              uplinkMuType;
+        ul_bsr_t           ulBufferStatus[HAL_MAX_BSR];
+        uint8              allocatedUplinkRuNum;
+        uint8              uplinkRuNumFlag;
+        ul_ru_allocation_t uplinkRuAllocations[HAL_MAX_RU_ALLOCATIONS_DRV];
+} ul_mu_stats_t;
+
+typedef struct dl_ru_allocation{
+        uint8 subChannels;
+        uint8 type;
+} dl_ru_allocation_t;
+
+typedef struct {
+        wlanAccessCategory_t  accessCategory;
+        uint32                queueSize;
+} dl_bsr_t;
+
+typedef struct dl_mu_stats{
+        uint8              downlinkMuType;
+        dl_bsr_t           dlBufferStatus[HAL_MAX_BSR];
+        uint8              allocatedDownlinkRuNum;
+        uint8              downlinkRuNumFlag;
+        dl_ru_allocation_t downlinkRuAllocations[HAL_MAX_RU_ALLOCATIONS_DRV];
+} dl_mu_stats_t;
+
 typedef struct mtlk_mhi_sta_stats{
     uint32 mpduFirstRetransmission;
     uint32 mpduTransmitted;
@@ -306,6 +376,20 @@ typedef struct mtlk_mhi_sta_stats{
     uint32 prevSumTimeNsec;
     uint32 maxRssi;
     uint32 minRssi;
+    uint32 packetRetransCount;
+    uint32 oneOrMoreRetryCount;
+    uint32 dropCntReasonClassifier;
+    uint32 dropCntReasonDisconnect;
+    uint32 dropCntReasonATF;
+    uint32 dropCntReasonTSFlush;
+    uint32 dropCntReasonReKey;
+    uint32 dropCntReasonSetKey;
+    uint32 dropCntReasonDiscard;
+    uint32 dropCntReasonDsabled;
+    uint32 dropCntReasonAggError;
+    twt_params_t twtStaParams;
+    ul_mu_stats_t uplinkMuStats;
+    dl_mu_stats_t downlinkMuStats;
 }mtlk_mhi_stats_sta_cntr_t;
 
 typedef struct mtlk_mhi_sta_stats64{
@@ -327,6 +411,17 @@ typedef struct mtlk_mhi_sta_stats64{
     uint64 tx_errors;
     uint64 sumTimeNsec;
     uint64 numMsdus;
+    uint64 packetRetransCount;
+    uint64 oneOrMoreRetryCount;
+    uint64 dropCntReasonClassifier;
+    uint64 dropCntReasonDisconnect;
+    uint64 dropCntReasonATF;
+    uint64 dropCntReasonTSFlush;
+    uint64 dropCntReasonReKey;
+    uint64 dropCntReasonSetKey;
+    uint64 dropCntReasonDiscard;
+    uint64 dropCntReasonDsabled;
+    uint64 dropCntReasonAggError;
 }mtlk_mhi_stats64_sta_cntr_t;
 
 typedef struct airtime_stats
@@ -351,6 +446,8 @@ typedef struct _sta_stats
   mtlk_bitrate_info_t   rx_data_rate_info; /* phy_rate OR rate_info*/
   mtlk_bitrate_info_t   rx_mgmt_rate_info; /* phy_rate OR rate_info */
   uint32                phy_rate_synched_to_psdu_rate;
+  uint32                max_phy_rate_synched_to_psdu_rate;
+  uint32                max_tx_data_rate;
   mtlk_bitrate_info16_t rx_psdu_data_rate_info; /* psdu_rate */
   int8                  max_rssi;
   int8                  data_rssi[MAX_NUM_RX_ANTENNAS];
@@ -363,6 +460,9 @@ typedef struct _sta_info
 {
   uint16              sid;
   uint16              flags;
+  uint16              bitrate_1ss; /* per one stream, internal units */
+  uint16              bitrate_max; /* max supported, internal units */
+  uint8               max_antennas;
   uint8               rates[WV_SUPP_RATES_MAX];
   uint8               bss_coex_20_40;
   uint8               ampdu_param;
@@ -600,6 +700,24 @@ mtlk_sta_get_long_term_rx(const sta_entry  *sta)
 }
 #endif /* MTLK_WWSS_WLAN_STAT_ANALYZER_RX_RATE_ALLOWED */
 
+static __INLINE uint16
+mtlk_sta_get_bitrate_1ss (const sta_entry *sta)
+{
+  return sta->info.bitrate_1ss;
+}
+
+static __INLINE uint16
+mtlk_sta_get_bitrate_max (const sta_entry *sta)
+{
+  return sta->info.bitrate_max;
+}
+
+static __INLINE uint8
+mtlk_sta_get_max_antennas (const sta_entry *sta)
+{
+  return sta->info.max_antennas;
+}
+
 static __INLINE uint8
 mtlk_sta_get_cipher (const sta_entry *sta)
 {
@@ -836,6 +954,24 @@ void __MTLK_IFUNC
 mtlk_sta_update_rx_rate_rssi_on_man_frame (sta_entry *sta, const mtlk_phy_info_t *phy_info);
 
 static __INLINE void
+mtlk_sta_set_bitrate_1ss (sta_entry *sta, uint16 value)
+{
+  sta->info.bitrate_1ss = value;
+}
+
+static __INLINE void
+mtlk_sta_set_bitrate_max (sta_entry *sta, uint16 value)
+{
+  sta->info.bitrate_max = value;
+}
+
+static __INLINE void
+mtlk_sta_set_max_antennas (sta_entry *sta, uint8 value)
+{
+  sta->info.max_antennas = value;
+}
+
+static __INLINE void
 mtlk_sta_set_cipher (sta_entry *sta,
                      uint8      cipher)
 {
@@ -1056,7 +1192,7 @@ void __MTLK_IFUNC
 wave_sta_get_dev_diagnostic_res2(mtlk_core_t *core, const sta_entry* sta, wifiAssociatedDevDiagnostic2_t *dev_diagnostic_stats);
 
 void __MTLK_IFUNC
-wave_sta_get_dev_diagnostic_res3(mtlk_core_t *core, const sta_entry* sta, wifiAssociatedDevDiagnostic3_t *dev_diagnostic_stats);
+wave_sta_get_dev_diagnostic_res3(mtlk_core_t *core, sta_entry* sta, wifiAssociatedDevDiagnostic3_t *dev_diagnostic_stats);
 
 void __MTLK_IFUNC
 mtlk_stadb_reset_cnts(sta_db *stadb);
@@ -1084,6 +1220,8 @@ const sta_entry * __MTLK_IFUNC
 mtlk_stadb_iterate_next(mtlk_stadb_iterator_t *iter);
 void __MTLK_IFUNC
 mtlk_stadb_iterate_done(mtlk_stadb_iterator_t *iter);
+void __MTLK_IFUNC
+mtlk_stadb_iterate_done_none_decref(mtlk_stadb_iterator_t *iter);
 
 BOOL __MTLK_IFUNC
 mtlk_global_stadb_is_empty(void);

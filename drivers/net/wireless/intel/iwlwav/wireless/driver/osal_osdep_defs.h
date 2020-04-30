@@ -341,12 +341,11 @@ mtlk_osal_event_init (mtlk_osal_event_t* event)
 }
 
 static __INLINE int
-mtlk_osal_event_wait (mtlk_osal_event_t* event, uint32 msec)
+mtlk_osal_event_wait_uninterruptible (mtlk_osal_event_t* event, unsigned long wait_time)
 {
-  int res =
-    msec?wait_event_timeout(event->wait_queue,
+  int res = wait_time ? wait_event_timeout(event->wait_queue,
                             event->wait_flag,
-                            msecs_to_jiffies(msec)):event->wait_flag;
+                            wait_time):event->wait_flag;
 
   mtlk_osal_lock_acquire(&event->wait_lock);
   if (event->wait_flag) {
@@ -359,10 +358,63 @@ mtlk_osal_event_wait (mtlk_osal_event_t* event, uint32 msec)
     res = MTLK_ERR_TIMEOUT;
   else {
     /* make sure we cover all cases */
-    printk(KERN_ALERT"wait_event_timeout returned %d", res);
+    printk(KERN_ALERT "wait_event_timeout returned %d", res);
     MTLK_ASSERT(FALSE);
   }
   mtlk_osal_lock_release(&event->wait_lock);
+  return res;
+}
+
+static __INLINE int
+mtlk_osal_event_wait (mtlk_osal_event_t* event, uint32 msec)
+{
+  unsigned long wait_time = msecs_to_jiffies(msec);
+  unsigned long start_time = jiffies;
+  unsigned long time_passed = 0;
+  int wait_flag, terminate_flag;
+  int res;
+
+  if (signal_pending(current)) {
+    /* In case of signals we fallback to uninterruptible wait */
+    mtlk_osal_emergency_print("mtlk_osal_event_wait: signal is pending, using wait_uninterruptible");
+    return mtlk_osal_event_wait_uninterruptible(event, wait_time);
+  }
+  res = msec ? wait_event_interruptible_timeout(event->wait_queue,
+                                                event->wait_flag,
+                                                wait_time):event->wait_flag;
+  /* Read flags */
+  mtlk_osal_lock_acquire(&event->wait_lock);
+  wait_flag = event->wait_flag;
+  terminate_flag = event->terminate_flag;
+  mtlk_osal_lock_release(&event->wait_lock);
+  if (wait_flag) {
+    /* Event has come */
+    if (terminate_flag)
+      return MTLK_ERR_TIMEOUT;
+    else
+      return MTLK_ERR_OK;
+  }
+  else if (res == 0) {
+    /* Timeout has occured */
+    return MTLK_ERR_TIMEOUT;
+  }
+  else if (res > 0) {
+      /* Event in reset state */
+    return MTLK_ERR_OK;
+  }
+  else {
+    /* Interruptable wait may return control earlier because of system signal.
+      * Fallback to uninterruptible wait */
+    mtlk_osal_emergency_print("mtlk_osal_event_wait: wait_event_interruptible_timeout() returned %d. Using uninterruptible", res);
+    if (msec != MTLK_OSAL_EVENT_INFINITE) {
+      time_passed = jiffies - start_time;
+      if (time_passed >= wait_time) {
+        return MTLK_ERR_TIMEOUT;
+      }
+      wait_time -= time_passed;
+    }
+    return mtlk_osal_event_wait_uninterruptible(event, wait_time);
+  }
   return res;
 }
 
@@ -371,6 +423,7 @@ mtlk_osal_event_set (mtlk_osal_event_t* event)
 {
   mtlk_osal_lock_acquire(&event->wait_lock);
   event->wait_flag = 1;
+  wake_up_interruptible(&event->wait_queue);
   wake_up(&event->wait_queue);
   mtlk_osal_lock_release(&event->wait_lock);
 }
@@ -381,6 +434,7 @@ mtlk_osal_event_terminate (mtlk_osal_event_t* event)
   mtlk_osal_lock_acquire(&event->wait_lock);
   event->wait_flag = 1;
   event->terminate_flag = 1;
+  wake_up_interruptible(&event->wait_queue);
   wake_up(&event->wait_queue);
   mtlk_osal_lock_release(&event->wait_lock);
 }

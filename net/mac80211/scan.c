@@ -303,8 +303,13 @@ void ieee80211_scan_rx(struct ieee80211_local *local, struct sk_buff *skb)
 	sdata1 = rcu_dereference(local->scan_sdata);
 	sdata2 = rcu_dereference(local->sched_scan_sdata);
 
-	if (likely(!sdata1 && !sdata2))
-		return;
+	if (likely(!sdata1 && !sdata2)) {
+		if (local->hw.wiphy->out_of_scan_caching &&
+		    !ieee80211_is_probe_resp(mgmt->frame_control))
+			goto update_cache;
+		else
+			return;
+	}
 
 	scan_req = rcu_dereference(local->scan_req);
 	sched_scan_req = rcu_dereference(local->sched_scan_req);
@@ -328,14 +333,15 @@ void ieee80211_scan_rx(struct ieee80211_local *local, struct sk_buff *skb)
 			return;
 	}
 
+	/* ignore Beacon and ProbeResp from channels that were not requested */
+	if (!ieee80211_scan_accept_bss(sdata1, scan_req, rx_status->freq) &&
+	    !ieee80211_sched_scan_accept_bss(sdata2, sched_scan_req, rx_status->freq))
+		return;
+
+update_cache:
 	channel = ieee80211_get_channel(local->hw.wiphy, rx_status->freq);
 
 	if (!channel || channel->flags & IEEE80211_CHAN_DISABLED)
-		return;
-
-	/* ignore Beacon and ProbeResp from channels that were not requested */
-	if (!ieee80211_scan_accept_bss(sdata1, scan_req, rx_status->freq) &&
-		!ieee80211_sched_scan_accept_bss(sdata2, sched_scan_req, rx_status->freq))
 		return;
 
 	bss = ieee80211_bss_info_update(local, rx_status,

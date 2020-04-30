@@ -2581,7 +2581,7 @@ typedef struct _UMI_FW_DBG_REQ
 #define STA_ADD_FLAGS_EXT_RES_7				MTLK_BFIELD_INFO(7, 1)
 
 
-#define MAX_SIZE_OF_RSSI_TABLE 				131
+#define MAX_SIZE_OF_RSSI_TABLE 				(217)
 
 typedef struct _UMI_SET_RSSI_CAL_CONFIG	
 {
@@ -3628,12 +3628,12 @@ typedef struct
 
 typedef struct
 {
-	uint32 initalWaitTimeInSeconds;
+	uint32 staConnectionTimeInSeconds;
 	uint32 radioOffTimeInMsecs;
-	uint32 radioOnTimerInMsecs;
-	uint32 isErpEnable; // 0 false -1 true
+	uint32 radioOnTimeInMsecs;
+	uint16 numberOfStationThreshold;
+	uint8  isErpEnable;
 	uint8  Status;
-	uint8  reserved[3];
 } UMI_ERPSet_t;
 
 typedef struct
@@ -3919,8 +3919,12 @@ typedef struct
 	uint8	Status;
 } UMI_FIXED_LTF_AND_GI_REQ_t;
 
-#define REG_DOMAIN_CONFIGURATION_0      	(0) 
-#define REG_DOMAIN_CONFIGURATION_1      	(1)
+#define REG_DOMAIN_FCC		(0)
+#define REG_DOMAIN_ETSI		(1)
+#define REG_DOMAIN_JAPAN	(2)
+#define REG_DOMAIN_KOREA	(3)
+#define REG_DOMAIN_CHINA	(4)
+#define REG_DOMAIN_DEFAULT	(0xFF)
 
 typedef struct _UMI_REG_DOMAIN_CONFIG
 {

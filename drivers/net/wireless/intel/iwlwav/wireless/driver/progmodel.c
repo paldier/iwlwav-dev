@@ -357,8 +357,9 @@ static void
 _wave_progmodel_get_fname (wave_progmodel_t *fw)
 {
   wave_prgmdl_parse_t *param = &fw->prgmdl_params;
-  unsigned chip_rev_idx;
   char *fpga_suffix;
+#if defined (CPTCFG_IWLWAV_LINDRV_HW_PCIEG5)
+  unsigned chip_rev_idx;
   char *pm_suffix;
   char *pm_suffixes[MTLK_CHIP_REV_CNT] = {
                 PM_SUFFIX_NONE, /* not available */
@@ -366,6 +367,7 @@ _wave_progmodel_get_fname (wave_progmodel_t *fw)
                 PM_SUFFIX_WRX514,
                 PM_SUFFIX_WRX300
   };
+#endif
 
   fpga_suffix = _mtlk_card_is_asic(param->hw_type) ? "" : "_fpga";
 

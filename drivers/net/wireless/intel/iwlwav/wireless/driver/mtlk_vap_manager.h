@@ -52,6 +52,7 @@ int                  __MTLK_IFUNC mtlk_vap_manager_create_vap(mtlk_vap_manager_t
                                                               struct net_device* ndev);
 
 int                  __MTLK_IFUNC mtlk_vap_manager_get_free_vap_index(mtlk_vap_manager_t *obj, uint32 *vap_index);
+mtlk_error_t         __MTLK_IFUNC mtlk_vap_manager_check_free_vap_index(mtlk_vap_manager_t *obj, uint32 vap_index);
 
 void                 __MTLK_IFUNC mtlk_vap_manager_set_master_ndev_taken (mtlk_vap_manager_t *obj, BOOL master_ndev_taken);
 BOOL                 __MTLK_IFUNC mtlk_vap_manager_get_master_ndev_taken (mtlk_vap_manager_t *obj);

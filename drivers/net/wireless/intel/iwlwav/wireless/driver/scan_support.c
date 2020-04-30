@@ -558,6 +558,7 @@ int clean_up_after_this_scan(mtlk_core_t *core, struct scan_support *ss)
   const char *name = mtlk_df_get_name(df);
   int res = MTLK_ERR_OK;
   struct mtlk_chan_def *cd = __wave_core_chandef_get(core);
+  int cur_freq = cd->center_freq1;
 
   MTLK_UNREFERENCED_PARAM(name); /* printouts only */
 
@@ -575,10 +576,18 @@ int clean_up_after_this_scan(mtlk_core_t *core, struct scan_support *ss)
   wmb(); /* so that set_channel really knows the scan has ended */
 
   /* we have to restore the channel, if we had one, and set normal mode (not scan mode) */
-  if (is_channel_certain(&ss->orig_chandef))
+  if (is_channel_certain(&ss->orig_chandef)) {
+    ILOG1_S("%s: Setting orig channel", name);
     res = core_cfg_set_chan(core, &ss->orig_chandef, NULL); /* this takes care of hdk config, etc. */
-  else
-    ILOG0_S("%s: Leaving the channel as uncertain after the scan", name);
+  }
+  else {
+    cd->center_freq1 = cur_freq;
+    res = wave_radio_set_first_non_dfs_chandef(wave_vap_radio_get(core->vap_handle));
+    if (res == MTLK_ERR_OK) {
+      ILOG0_SD("%s: Setting channel: %d to normal", name, cd->center_freq1);
+      res = core_cfg_set_chan(core, cd, NULL);
+    }
+  }
 
   /* else it will soon get set explicitly by hostapd and most likely has been set by the scan, just the mode is still SCAN */
 
@@ -981,6 +990,7 @@ set_chan:
   /* Send CCA threshold on every set channel */
   if (MTLK_ERR_OK == res) {
     mtlk_core_cfg_send_actual_cca_threshold(core);
+    (void)mtlk_core_set_coc_pause_power_mode(core);
   }
 
   if (res != MTLK_ERR_OK)
@@ -1292,6 +1302,7 @@ int _scan_do_scan(mtlk_core_t *core, struct mtlk_scan_request *request)
     ss->NumProbeReqs = ss->iwpriv_scan_params_bg.num_probe_reqs;
     ss->ProbeReqInterval = ss->iwpriv_scan_params_bg.probe_req_interval;
     ss->NumChansInChunk = ss->iwpriv_scan_params_bg.num_chans_in_chunk;
+    MTLK_ASSERT(ss->NumChansInChunk != 0);
     ss->ChanChunkInterval = ss->iwpriv_scan_params_bg.chan_chunk_interval;
   }
   else /* not a background scan */

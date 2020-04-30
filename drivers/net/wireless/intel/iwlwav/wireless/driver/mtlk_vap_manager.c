@@ -323,6 +323,27 @@ mtlk_vap_manager_get_free_vap_index (mtlk_vap_manager_t *obj, uint32 *vap_index)
   return res;
 }
 
+mtlk_error_t __MTLK_IFUNC
+mtlk_vap_manager_check_free_vap_index (mtlk_vap_manager_t *obj, uint32 vap_index)
+{
+  mtlk_error_t res = MTLK_ERR_NO_RESOURCES;
+
+  MTLK_ASSERT(NULL != obj);
+
+  if (NULL == obj->guest_vap_array) {
+    res = mtlk_vap_manager_prepare_vaps(obj);
+    if (MTLK_ERR_OK != res) {
+      return res;
+    }
+  }
+
+  if ((vap_index < obj->max_vaps_count) && (!obj->guest_vap_array[vap_index])) {
+    res = MTLK_ERR_OK;
+  }
+
+  return res;
+}
+
 void __MTLK_IFUNC
 mtlk_vap_manager_set_master_ndev_taken (mtlk_vap_manager_t *obj, BOOL master_ndev_taken){
   obj->master_ndev_taken = master_ndev_taken;
@@ -412,7 +433,7 @@ mtlk_vap_manager_deallocate_vaps (mtlk_vap_manager_t *obj)
 
   max_vaps_count = mtlk_vap_manager_get_max_vaps_count(obj);
   /* deallocate memory for all vaps including master vap */
-  for (vap_index = max_vaps_count - 1; vap_index >= 0; vap_index--) {
+  for (vap_index = 0; vap_index < max_vaps_count; vap_index++) {
     mtlk_vap_handle_t vap_handle = __mtlk_vap_manager_vap_handle_by_id(obj, vap_index);
     if (NULL != vap_handle) {
       mtlk_vap_delete(vap_handle);
@@ -443,7 +464,7 @@ mtlk_vap_manager_prepare_stop(mtlk_vap_manager_t *obj)
   MTLK_ASSERT(NULL != obj);
 
   max_vaps_count = mtlk_vap_manager_get_max_vaps_count(obj);
-  for (vap_index = max_vaps_count - 1; vap_index >= 0; vap_index--) {
+  for (vap_index = 0; vap_index < max_vaps_count; vap_index++) {
     mtlk_vap_handle_t vap_handle = __mtlk_vap_manager_vap_handle_by_id(obj, vap_index);
     if (NULL != vap_handle) {
       mtlk_vap_get_core_vft(vap_handle)->prepare_stop(vap_handle);
@@ -459,7 +480,7 @@ mtlk_vap_manager_stop_all_vaps(mtlk_vap_manager_t *obj)
   MTLK_ASSERT(NULL != obj);
 
   max_vaps_count = mtlk_vap_manager_get_max_vaps_count(obj);
-  for (vap_index = max_vaps_count - 1; vap_index >= 0; vap_index--) {
+  for (vap_index = 0; vap_index < max_vaps_count; vap_index++) {
     mtlk_vap_handle_t vap_handle = __mtlk_vap_manager_vap_handle_by_id(obj, vap_index);
     if (NULL != vap_handle) {
       mtlk_vap_stop(vap_handle);

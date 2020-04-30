@@ -486,7 +486,10 @@ typedef struct
 	uint32			u32BandConfiguration; /* 0x0 - single band / 0x1 - dual band / 0x2 - single band + scan on other band */
 	uint32			u32PCIeCardConfiguration; /* 0x0 - single PCIe / 0x1 - dual PCIe */
 	uint32			u32TestPlatformType; /* 0x0 - FPGA, 0x1 - PDXP (Palladium). this field is ignored when running on real chip */
+	uint32			masterVapIDBand0; /* this will be used by the FW for dual band and for single band */
+	uint32			masterVapIDBand1; /* this will be used by the FW for dual band only */
 } __MTLK_PACKED VECTOR_AREA_CARD_CONFIGURATION_EXTENSION_DATA;
+
 
 
 typedef struct

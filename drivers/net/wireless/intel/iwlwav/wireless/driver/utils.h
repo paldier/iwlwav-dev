@@ -45,6 +45,12 @@ mtlk_str_to_mac (char const *str, uint8 *addr);
 int __MTLK_IFUNC
 mtlk_mac_to_str (const IEEE_ADDR *addr, char *name, size_t size);
 
+void __MTLK_IFUNC clr_set_he_cap(u8 *field, int val, u8 mask);
+
+u8 __MTLK_IFUNC set_he_cap(int val, u8 mask);
+u8 __MTLK_IFUNC get_he_cap(int val, u8 mask);
+u8 __MTLK_IFUNC min_he_cap(int val1, int val2, u8 mask);
+void __MTLK_IFUNC get_he_mcs_nss(const __le16 our_he_mcs_nss, __le16 sta_he_mcs_nss, __le16 *out_he_mcs_nss);
 /*
   Trim spaces from left side
 

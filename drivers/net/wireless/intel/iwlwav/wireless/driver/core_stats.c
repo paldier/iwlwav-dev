@@ -140,7 +140,7 @@ mtlk_core_get_channel_stats (mtlk_handle_t hcore, const void *data, uint32 data_
     }
   MTLK_CLPB_FINALLY(res)
      res = mtlk_clpb_push_res_data_no_copy(clpb, res, chan_stats, total_size);
-    if (MTLK_ERR_OK != res) {
+    if (MTLK_ERR_OK != res && chan_stats != NULL) {
       mtlk_osal_mem_free(chan_stats);
     }
     return res;
@@ -542,25 +542,29 @@ mtlk_core_get_tr181_peer_statistics (mtlk_handle_t hcore, const void *data, uint
   mtlk_core_t *core = HANDLE_T_PTR(mtlk_core_t, hcore);
   mtlk_clpb_t *clpb = *(mtlk_clpb_t **) data;
   int res = MTLK_ERR_OK;
-  IEEE_ADDR *addr;
-  uint32 addr_size;
+  st_info_data_t *info_data;
+  unsigned info_data_size;
   sta_entry *sta = NULL;
   mtlk_wssa_drv_tr181_peer_stats_t tr181_stats;
 
   MTLK_ASSERT(sizeof(mtlk_clpb_t*) == data_size);
-  addr = mtlk_clpb_enum_get_next(clpb, &addr_size);
-  MTLK_CLPB_TRY(addr, addr_size)
 
-    /* find station in stadb */
-    sta = mtlk_stadb_find_sta(&core->slow_ctx->stadb, addr->au8Addr);
-    if (NULL == sta) {
-      ILOG1_DY("CID-%04x: station %Y not found",
-               mtlk_vap_get_oid(core->vap_handle), addr);
-      MTLK_CLPB_EXIT(MTLK_ERR_UNKNOWN);
-    } else {
+  info_data = mtlk_clpb_enum_get_next(clpb, &info_data_size);
+  MTLK_CLPB_TRY(info_data, info_data_size)
+
+  if (info_data->sta)
+    sta = wv_ieee80211_get_sta(info_data->sta);
+  else
+    sta = mtlk_stadb_find_sta(&core->slow_ctx->stadb, info_data->mac);
+
+  if (NULL == sta) {
+    ILOG1_DY("CID-%04x: station %Y not found",
+               mtlk_vap_get_oid(core->vap_handle), info_data->mac);
+    MTLK_CLPB_EXIT(MTLK_ERR_UNKNOWN);
+  } else {
       mtlk_sta_get_tr181_peer_stats(sta, &tr181_stats);
       mtlk_sta_decref(sta);
-    }
+  }
 
   MTLK_CLPB_FINALLY(res)
     return mtlk_clpb_push_res_data(clpb, res, &tr181_stats, sizeof(mtlk_wssa_drv_tr181_peer_stats_t));
@@ -607,24 +611,34 @@ wave_core_get_dev_diag_result3 (mtlk_handle_t hcore, const void *data, uint32 da
   IEEE_ADDR *addr;
   uint32 addr_size;
   sta_entry *sta = NULL;
-  wifiAssociatedDevDiagnostic3_t dev_diag_res3_stats;
+  wifiAssociatedDevDiagnostic3_t *dev_diag_res3_stats = NULL;
 
   MTLK_ASSERT(sizeof(mtlk_clpb_t*) == data_size);
   addr = mtlk_clpb_enum_get_next(clpb, &addr_size);
   MTLK_CLPB_TRY(addr, addr_size)
-
-    /* find station in stadb */
-    sta = mtlk_vap_find_sta(core->vap_handle, addr->au8Addr);
-    if (NULL == sta) {
-      WLOG_DY("CID-%04x: station %Y not found",
-        mtlk_vap_get_oid(core->vap_handle), addr);
-      MTLK_CLPB_EXIT(MTLK_ERR_UNKNOWN);
-    } else {
-      wave_sta_get_dev_diagnostic_res3(core, sta, &dev_diag_res3_stats);
-      mtlk_sta_decref(sta);
+    dev_diag_res3_stats = mtlk_osal_mem_alloc(sizeof(wifiAssociatedDevDiagnostic3_t), MTLK_MEM_TAG_EXTENSION);
+    if (NULL == dev_diag_res3_stats) {
+      ELOG_V("Can't allocate memory for dev_diag_res3_stats struct");
+      MTLK_CLPB_EXIT(MTLK_ERR_NO_MEM);
     }
+    memset(dev_diag_res3_stats, 0, sizeof(wifiAssociatedDevDiagnostic3_t));
+
+      /* find station in stadb */
+      sta = mtlk_vap_find_sta(core->vap_handle, addr->au8Addr);
+      if (NULL == sta) {
+        WLOG_DY("CID-%04x: station %Y not found",
+          mtlk_vap_get_oid(core->vap_handle), addr);
+        MTLK_CLPB_EXIT(MTLK_ERR_UNKNOWN);
+      } else {
+        wave_sta_get_dev_diagnostic_res3(core, sta, dev_diag_res3_stats);
+        mtlk_sta_decref(sta);
+      }
 
   MTLK_CLPB_FINALLY(res)
-    return mtlk_clpb_push_res_data(clpb, res, &dev_diag_res3_stats, sizeof(wifiAssociatedDevDiagnostic3_t));
+    res = mtlk_clpb_push_res_data_no_copy(clpb, res, dev_diag_res3_stats, sizeof(wifiAssociatedDevDiagnostic3_t));
+    if (MTLK_ERR_OK != res && dev_diag_res3_stats != NULL) {
+      mtlk_osal_mem_free(dev_diag_res3_stats);
+    }
+    return res;
   MTLK_CLPB_END;
 }

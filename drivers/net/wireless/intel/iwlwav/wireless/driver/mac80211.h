@@ -64,7 +64,6 @@ BOOL                  __MTLK_IFUNC wv_mac80211_iface_get_is_initialized (wv_mac8
 
 struct ieee80211_vif * __MTLK_IFUNC wave_vap_get_vif (mtlk_vap_handle_t vap_handle);
 struct ieee80211_vif *             wv_mac80211_get_vif (wv_mac80211_t *mac80211, u8 vap_index);
-BOOL                               wave_vap_is_dummy (mtlk_vap_handle_t vap_handle);
 
 void _wave_mac80211_register_vendor_cmds(struct wiphy *wiphy);
 void _wave_mac80211_register_vendor_evts(struct wiphy *wiphy);

@@ -1027,11 +1027,12 @@ typedef void (*mtlk_mmb_data_handler_fn_t) (mtlk_irq_handler_data *ihd);
 
 
 typedef union {
-  uint32 words[3];
+  uint32 words[5];
   struct {
     uint32 band_cfg;
     uint32 dual_pcie_cfg;
     uint32 platform_type;
+    uint32 master_vapid_band[2];  /* two radios */
   } card_cfg;
 } fw_chi_card_cfg_t;
 
@@ -6244,6 +6245,7 @@ _mtlk_sta_update_statistics (mtlk_hw_t *hw, sta_entry *sta, stationPhyRxStatusDb
   uint32 tx_errors;
   unsigned vap_id = mtlk_vap_get_id(sta->vap_handle);
   int chip_id = __hw_mmb_get_chip_id(hw);
+  int agreement, buffer_status;
 
   hw_stats = &hw->hw_stats;
   sta_sid = mtlk_sta_get_sid(sta);
@@ -6297,6 +6299,30 @@ _mtlk_sta_update_statistics (mtlk_hw_t *hw, sta_entry *sta, stationPhyRxStatusDb
                                    (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.exhaustedCount[sta_sid], chip_id)));
   __stats_accumulate_64bit(&stats64->successCount, &values->successCount,
                                    (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.successCount[sta_sid], chip_id)));
+
+  __stats_accumulate_64bit(&stats64->packetRetransCount, &values->packetRetransCount,
+                                   (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.packetRetransCount[sta_sid], chip_id)));
+  __stats_accumulate_64bit(&stats64->oneOrMoreRetryCount, &values->oneOrMoreRetryCount,
+                                   (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.oneOrMoreRetryCount[sta_sid], chip_id)));
+  __stats_accumulate_64bit(&stats64->dropCntReasonClassifier, &values->dropCntReasonClassifier,
+                                   (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.dropCntReasonClassifier[sta_sid], chip_id)));
+  __stats_accumulate_64bit(&stats64->dropCntReasonDisconnect, &values->dropCntReasonDisconnect,
+                                   (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.dropCntReasonDisconnect[sta_sid], chip_id)));
+  __stats_accumulate_64bit(&stats64->dropCntReasonATF, &values->dropCntReasonATF,
+                                   (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.dropCntReasonATF[sta_sid], chip_id)));
+  __stats_accumulate_64bit(&stats64->dropCntReasonTSFlush, &values->dropCntReasonTSFlush,
+                                    (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.dropCntReasonTSFlush[sta_sid], chip_id)));
+  __stats_accumulate_64bit(&stats64->dropCntReasonReKey, &values->dropCntReasonReKey,
+                                    (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.dropCntReasonReKey[sta_sid], chip_id)));
+  __stats_accumulate_64bit(&stats64->dropCntReasonSetKey, &values->dropCntReasonSetKey,
+                                    (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.dropCntReasonSetKey[sta_sid], chip_id)));
+  __stats_accumulate_64bit(&stats64->dropCntReasonDiscard, &values->dropCntReasonDiscard,
+                                    (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.dropCntReasonDiscard[sta_sid], chip_id)));
+  __stats_accumulate_64bit(&stats64->dropCntReasonDsabled, &values->dropCntReasonDsabled,
+                                    (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.dropCntReasonDsabled[sta_sid], chip_id)));
+  __stats_accumulate_64bit(&stats64->dropCntReasonAggError, &values->dropCntReasonAggError,
+                                    (MTLK_GET_STATS(hw_stats->stats_copy, perClientStats.dropCntReasonAggError[sta_sid], chip_id)));
+
   __stats_accumulate_64bit(&stats64->rdDuplicateDrop, &values->rdDuplicateDrop,
                                    (MTLK_GET_STATS(hw_stats->stats_copy, rxCounters.staCounts[sta_sid].rdDuplicateDrop, chip_id)));
   __stats_accumulate_64bit(&stats64->missingSn, &values->missingSn,
@@ -6331,6 +6357,56 @@ _mtlk_sta_update_statistics (mtlk_hw_t *hw, sta_entry *sta, stationPhyRxStatusDb
   } else if (_chipid_is_gen6_d2(chip_id)) {
     __stats_accumulate_64bit(&stats64->txRetryCount, &values->txRetryCount,
        (MTLK_GET_STATS_D2(hw_stats->stats_copy, baaCounters.staCounts[sta_sid].mpduRetransmission)));
+  }
+
+  for(agreement = 0 ; agreement < TWT_MAX_AGREEMENTS_ALLOWED; agreement++ ) {
+    values->twtStaParams.numOfAgreementsForSta = MTLK_GET_STATS(hw_stats->stats_copy,twtStats.twtStaParams[sta_sid].numOfAgreementsForSta, chip_id);
+    values->twtStaParams.twtAgreement[agreement].state = MTLK_GET_STATS(hw_stats->stats_copy,twtStats.twtStaParams[sta_sid].twtAgreement[agreement].state, chip_id);
+    values->twtStaParams.twtAgreement[agreement].agreementType = MTLK_GET_STATS(hw_stats->stats_copy,twtStats.twtStaParams[sta_sid].twtAgreement[agreement].agreementType, chip_id);
+
+    values->twtStaParams.twtAgreement[agreement].operation.implicit = MTLK_GET_STATS(hw_stats->stats_copy,twtStats.twtStaParams[sta_sid].twtAgreement[agreement].operation.implicit, chip_id);
+    values->twtStaParams.twtAgreement[agreement].operation.announced = MTLK_GET_STATS(hw_stats->stats_copy,twtStats.twtStaParams[sta_sid].twtAgreement[agreement].operation.announced, chip_id);
+    values->twtStaParams.twtAgreement[agreement].operation.triggerEnabled = MTLK_GET_STATS(hw_stats->stats_copy,twtStats.twtStaParams[sta_sid].twtAgreement[agreement].operation.triggerEnabled, chip_id);
+    values->twtStaParams.twtAgreement[agreement].params.individual.wakeTime = (MTLK_GET_STATS(hw_stats->stats_copy,twtStats.twtStaParams[sta_sid].twtAgreement[agreement].params.individual.wakeTimeHigh, chip_id));
+    values->twtStaParams.twtAgreement[agreement].params.individual.wakeTime = (values->twtStaParams.twtAgreement[agreement].params.individual.wakeTime << 32) | (MTLK_GET_STATS(hw_stats->stats_copy,twtStats.twtStaParams[sta_sid].twtAgreement[agreement].params.individual.wakeTimeLow, chip_id));
+    values->twtStaParams.twtAgreement[agreement].params.individual.wakeInterval = MTLK_GET_STATS(hw_stats->stats_copy,twtStats.twtStaParams[sta_sid].twtAgreement[agreement].params.individual.wakeInterval, chip_id);
+    values->twtStaParams.twtAgreement[agreement].params.individual.minWakeDuration = MTLK_GET_STATS(hw_stats->stats_copy,twtStats.twtStaParams[sta_sid].twtAgreement[agreement].params.individual.minWakeDuration, chip_id);
+    values->twtStaParams.twtAgreement[agreement].params.individual.channel = MTLK_GET_STATS(hw_stats->stats_copy,twtStats.twtStaParams[sta_sid].twtAgreement[agreement].params.individual.channel, chip_id);
+  }
+
+  values->uplinkMuStats.uplinkMuType = MTLK_GET_STATS(hw_stats->stats_copy, planManagerStats.uplinkMuStats[sta_sid].uplinkMuType, chip_id);
+  if(values->uplinkMuStats.allocatedUplinkRuNum == HAL_MAX_RU_ALLOCATIONS_DRV) {
+    values->uplinkMuStats.allocatedUplinkRuNum = 0;
+    values->uplinkMuStats.uplinkRuNumFlag = 1;
+  }
+  values->uplinkMuStats.uplinkRuAllocations[values->uplinkMuStats.allocatedUplinkRuNum].subChannels = MTLK_GET_STATS(hw_stats->stats_copy, planManagerStats.uplinkMuStats[sta_sid].ulRuSubChannels, chip_id);
+  values->uplinkMuStats.uplinkRuAllocations[values->uplinkMuStats.allocatedUplinkRuNum].type = MTLK_GET_STATS(hw_stats->stats_copy, planManagerStats.uplinkMuStats[sta_sid].ulRuType, chip_id);
+  values->uplinkMuStats.allocatedUplinkRuNum++;
+
+  buffer_status=0;
+  values->uplinkMuStats.ulBufferStatus[buffer_status++].queueSize = MTLK_GET_STATS(hw_stats->stats_copy, uplinkBsrcTidCnt.BsrcPerTidCnt[sta_sid].bufStsCnt0, chip_id);
+  values->uplinkMuStats.ulBufferStatus[buffer_status++].queueSize = MTLK_GET_STATS(hw_stats->stats_copy, uplinkBsrcTidCnt.BsrcPerTidCnt[sta_sid].bufStsCnt1, chip_id);
+  values->uplinkMuStats.ulBufferStatus[buffer_status++].queueSize = MTLK_GET_STATS(hw_stats->stats_copy, uplinkBsrcTidCnt.BsrcPerTidCnt[sta_sid].bufStsCnt2, chip_id);
+  values->uplinkMuStats.ulBufferStatus[buffer_status++].queueSize = MTLK_GET_STATS(hw_stats->stats_copy, uplinkBsrcTidCnt.BsrcPerTidCnt[sta_sid].bufStsCnt3, chip_id);
+  values->uplinkMuStats.ulBufferStatus[buffer_status++].queueSize = MTLK_GET_STATS(hw_stats->stats_copy, uplinkBsrcTidCnt.BsrcPerTidCnt[sta_sid].bufStsCnt4, chip_id);
+  values->uplinkMuStats.ulBufferStatus[buffer_status++].queueSize = MTLK_GET_STATS(hw_stats->stats_copy, uplinkBsrcTidCnt.BsrcPerTidCnt[sta_sid].bufStsCnt5, chip_id);
+  values->uplinkMuStats.ulBufferStatus[buffer_status++].queueSize = MTLK_GET_STATS(hw_stats->stats_copy, uplinkBsrcTidCnt.BsrcPerTidCnt[sta_sid].bufStsCnt6, chip_id);
+  values->uplinkMuStats.ulBufferStatus[buffer_status++].queueSize = MTLK_GET_STATS(hw_stats->stats_copy, uplinkBsrcTidCnt.BsrcPerTidCnt[sta_sid].bufStsCnt7, chip_id);
+
+  values->downlinkMuStats.downlinkMuType = MTLK_GET_STATS(hw_stats->stats_copy, planManagerStats.downlinkMuStats[sta_sid].downlinkMuType, chip_id);
+  if(values->downlinkMuStats.allocatedDownlinkRuNum == HAL_MAX_RU_ALLOCATIONS_DRV) {
+    values->downlinkMuStats.allocatedDownlinkRuNum = 0;
+    values->downlinkMuStats.downlinkRuNumFlag = 1;
+  }
+  values->downlinkMuStats.downlinkRuAllocations[values->downlinkMuStats.allocatedDownlinkRuNum].subChannels = MTLK_GET_STATS(hw_stats->stats_copy, planManagerStats.downlinkMuStats[sta_sid].dlRuSubChannels, chip_id);
+  values->downlinkMuStats.downlinkRuAllocations[values->downlinkMuStats.allocatedDownlinkRuNum].type = MTLK_GET_STATS(hw_stats->stats_copy, planManagerStats.downlinkMuStats[sta_sid].dlRuType, chip_id);
+  values->downlinkMuStats.allocatedDownlinkRuNum++;
+  for(buffer_status = 0; buffer_status < HAL_MAX_BSR; buffer_status++) {
+    if(_chipid_is_gen6_a0(chip_id) || _chipid_is_gen6_b0(chip_id)) {
+      values->downlinkMuStats.dlBufferStatus[buffer_status].queueSize = MTLK_GET_STATS_B0(hw_stats->stats_copy, hostIfCounters.qosByteCountSta[sta_sid][buffer_status]);
+    } else {
+      values->downlinkMuStats.dlBufferStatus[buffer_status].queueSize = MTLK_GET_STATS_D2(hw_stats->stats_copy, hostIfQosCounters.qosByteCountSta[sta_sid][buffer_status]);
+    }
   }
 
   mtlk_osal_lock_release(&hw_stats->lock);
@@ -6463,7 +6539,7 @@ static void
 _mtlk_hw_check_and_convert_endianess (mtlk_hw_t *hw)
 {
   hw_statistics_t         *hw_stats;
-  int                      i;
+  int                      i,sta,agreement;
   int                      chip_id = __hw_mmb_get_chip_id(hw);
 
   hw_stats = &hw->hw_stats;
@@ -6479,7 +6555,7 @@ _mtlk_hw_check_and_convert_endianess (mtlk_hw_t *hw)
     MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, hostIfCounters.vapCounts[i].rxOutBroadcastHd , chip_id);
     MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, hostIfCounters.vapCounts[i].rxOutUnicastNumOfBytes , chip_id);
     MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, hostIfCounters.vapCounts[i].rxOutMulticastNumOfBytes , chip_id);
-    MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, hostIfCounters.vapCounts[i].rxOutMulticastNumOfBytes , chip_id);
+    MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, hostIfCounters.vapCounts[i].rxOutBroadcastNumOfBytes , chip_id);
     MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, hostIfCounters.vapCounts[i].agerCount , chip_id);
 
     MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, rxCounters.rxppVapCounts[i].mpduUnicastOrMngmnt , chip_id);
@@ -6682,8 +6758,23 @@ _mtlk_hw_check_and_convert_endianess (mtlk_hw_t *hw)
   MTLK_CONVERT_ENDIANESS(hw_stats->stats_data,  ptaStats.btTxOngoing, chip_id);
   MTLK_CONVERT_ENDIANESS(hw_stats->stats_data,  ptaStats.gpio, chip_id);
 
-  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, twtStats.numOfAgreementsForSta, chip_id);
-  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, twtStats.numOfStaInSp, chip_id);
+  for (sta = 0; sta < HW_NUM_OF_STATIONS; sta++) {
+    for(agreement = 0 ; agreement < TWT_MAX_AGREEMENTS_ALLOWED; agreement++ ) {
+      MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, twtStats.numOfStaInSp, chip_id);
+      MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, twtStats.twtStaParams[sta].numOfAgreementsForSta, chip_id);
+      MTLK_CONVERT_ENDIANESS_UINT16(hw_stats->stats_data, twtStats.twtStaParams[sta].twtAgreement[agreement].state, chip_id);
+      MTLK_CONVERT_ENDIANESS_UINT16(hw_stats->stats_data, twtStats.twtStaParams[sta].twtAgreement[agreement].agreementType, chip_id);
+      MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, twtStats.twtStaParams[sta].twtAgreement[agreement].params.individual.wakeTimeHigh, chip_id);
+      MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, twtStats.twtStaParams[sta].twtAgreement[agreement].params.individual.wakeTimeLow, chip_id);
+      MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, twtStats.twtStaParams[sta].twtAgreement[agreement].params.individual.wakeInterval, chip_id);
+      MTLK_CONVERT_ENDIANESS_UINT16(hw_stats->stats_data, twtStats.twtStaParams[sta].twtAgreement[agreement].params.individual.minWakeDuration, chip_id);
+      MTLK_CONVERT_ENDIANESS_UINT16(hw_stats->stats_data, twtStats.twtStaParams[sta].twtAgreement[agreement].params.individual.channel, chip_id);
+#if 0 /* Broadcast not supported in FW */
+      MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, twtStats.twtStaParams[sta].twtAgreement[agreement].params.broadcast.tragetBeacon, chip_id);
+      MTLK_CONVERT_ENDIANESS(hw_stats->stats_data, twtStats.twtStaParams[sta].twtAgreement[agreement].params.broadcast.listenInterval, chip_id);
+#endif
+    }
+  }
 
   MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.retryCount, chip_id);
   MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.successCount, chip_id);
@@ -6692,6 +6783,28 @@ _mtlk_hw_check_and_convert_endianess (mtlk_hw_t *hw)
   MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.mpduRetryCount, chip_id);
   MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.mpduInAmpdu, chip_id);
   MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.ampdu, chip_id);
+  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.packetRetransCount, chip_id);
+  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.oneOrMoreRetryCount, chip_id);
+  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.dropCntReasonClassifier, chip_id);
+  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.dropCntReasonDisconnect, chip_id);
+  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.dropCntReasonATF, chip_id);
+  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.dropCntReasonTSFlush, chip_id);
+  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.dropCntReasonReKey, chip_id);
+  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.dropCntReasonSetKey, chip_id);
+  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.dropCntReasonDiscard, chip_id);
+  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.dropCntReasonDsabled, chip_id);
+  MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, perClientStats.dropCntReasonAggError, chip_id);
+
+  for (i = 0; i < HW_NUM_OF_STATIONS; i++) {
+    MTLK_CONVERT_ENDIANESS_UINT16(hw_stats->stats_data, uplinkBsrcTidCnt.BsrcPerTidCnt[i].bufStsCnt0, chip_id);
+    MTLK_CONVERT_ENDIANESS_UINT16(hw_stats->stats_data, uplinkBsrcTidCnt.BsrcPerTidCnt[i].bufStsCnt1, chip_id);
+    MTLK_CONVERT_ENDIANESS_UINT16(hw_stats->stats_data, uplinkBsrcTidCnt.BsrcPerTidCnt[i].bufStsCnt2, chip_id);
+    MTLK_CONVERT_ENDIANESS_UINT16(hw_stats->stats_data, uplinkBsrcTidCnt.BsrcPerTidCnt[i].bufStsCnt3, chip_id);
+    MTLK_CONVERT_ENDIANESS_UINT16(hw_stats->stats_data, uplinkBsrcTidCnt.BsrcPerTidCnt[i].bufStsCnt4, chip_id);
+    MTLK_CONVERT_ENDIANESS_UINT16(hw_stats->stats_data, uplinkBsrcTidCnt.BsrcPerTidCnt[i].bufStsCnt5, chip_id);
+    MTLK_CONVERT_ENDIANESS_UINT16(hw_stats->stats_data, uplinkBsrcTidCnt.BsrcPerTidCnt[i].bufStsCnt6, chip_id);
+    MTLK_CONVERT_ENDIANESS_UINT16(hw_stats->stats_data, uplinkBsrcTidCnt.BsrcPerTidCnt[i].bufStsCnt7, chip_id);
+  }
 
   MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, generalStats.calibrationMask, chip_id);
   MTLK_CONVERT_ENDIANESS_ARRAY_32(hw_stats->stats_data, generalStats.onlineCalibrationMask, chip_id);
@@ -7612,6 +7725,36 @@ _wave_hw_cfg_platform_type_set (mtlk_hw_t *hw)
   ILOG0_D("TestPlatformType: %d", hw->fw_card_cfg.card_cfg.platform_type);
 }
 
+static mtlk_error_t
+_wave_hw_cfg_master_vap_index_set (mtlk_hw_t *hw)
+{
+  unsigned  radio_idx;
+  unsigned  master_idx;
+  uint8     master_idx_fw;
+  wave_radio_t *radio;
+
+  /* Clean values */
+  hw->fw_card_cfg.card_cfg.master_vapid_band[0] = 0;
+  hw->fw_card_cfg.card_cfg.master_vapid_band[1] = 0;
+
+  for (radio_idx = 0; radio_idx < hw->radio_descr->num_radios; radio_idx++) {
+    radio = __mtlk_hw_wave_radio_get(hw, radio_idx);
+    if (!radio) {
+      ILOG3_D("Cannot get radio %u", radio_idx);
+      return MTLK_ERR_UNKNOWN;
+    }
+    master_idx = wave_radio_master_vap_id_get(radio);
+    (void)wave_hw_band_hd_ep_bit_get(hw, radio_idx, master_idx, &master_idx_fw);
+    hw->fw_card_cfg.card_cfg.master_vapid_band[radio_idx] = master_idx_fw;
+  }
+
+  ILOG0_DD("master vap idx: band0:%u, band1:%u",
+      hw->fw_card_cfg.card_cfg.master_vapid_band[0],
+      hw->fw_card_cfg.card_cfg.master_vapid_band[1]);
+
+  return MTLK_ERR_OK;
+}
+
 static int _wave_hw_radio_band_cfg_init(mtlk_hw_t *hw);
 
 int __MTLK_IFUNC
@@ -7660,6 +7803,10 @@ mtlk_hw_mmb_init_card(mtlk_hw_t *hw, mtlk_ccr_t *ccr, unsigned char *mmb_base, u
 
   /* init dual pci flag*/
   _wave_hw_dual_pci_mode_set(hw, is_dual_pci);
+
+  /* init master vap index in cfg area */
+  if (MTLK_ERR_OK != _wave_hw_cfg_master_vap_index_set(hw))
+    return MTLK_ERR_UNKNOWN;
 
   MTLK_INIT_TRY(hw_mmb_card, MTLK_OBJ_PTR(hw))
 #if CPTCFG_IWLWAV_TRACER_HISTORY_LENGTH
@@ -11865,6 +12012,30 @@ mtlk_mmb_print_tx_bss_res_queue(mtlk_hw_t *hw)
     _mtlk_mmb_dump_bss_mgmt_res_queue(&hw->bss_mgmt);
 }
 
+void __MTLK_IFUNC
+mtlk_mmb_clean_tx_bss_res_queue_for_vap (mtlk_hw_t *hw, uint8 radio_id, uint8 vap_id)
+{
+  mtlk_dlist_entry_t *entry;
+  struct mtlk_bss_management *bss_mgmt;
+
+  MTLK_ASSERT(hw);
+
+  bss_mgmt = &hw->bss_mgmt;
+
+  mtlk_osal_lock_acquire(&bss_mgmt->tx_bdr.lock);
+  list_for_each(entry, &bss_mgmt->tx_res_bdr.used_list.head)
+  {
+    struct mtlk_hw_bss_req_mirror *bss_req_res
+      = MTLK_LIST_GET_CONTAINING_RECORD(entry, struct mtlk_hw_bss_req_mirror, hdr.list_entry);
+
+    if ((bss_req_res->radio_id == radio_id) && (bss_req_res->vap_id == vap_id)) {
+      mtlk_dlist_remove(&bss_mgmt->tx_res_bdr.used_list, entry);
+      mtlk_dlist_push_back(&bss_mgmt->tx_res_bdr.free_list, entry);
+    }
+  }
+  mtlk_osal_lock_release(&bss_mgmt->tx_bdr.lock);
+}
+
 int mtlk_mmb_bss_mgmt_tx (mtlk_vap_handle_t vap_handle, const uint8 *buf, size_t len, int channum,
                           BOOL no_cck, BOOL dont_wait_for_ack, BOOL is_broadcast,
                           uint64 *cookie, uint32 extra_processing, mtlk_nbuf_t *skb,
@@ -11888,7 +12059,7 @@ int mtlk_mmb_bss_mgmt_tx (mtlk_vap_handle_t vap_handle, const uint8 *buf, size_t
 
   cur_core = mtlk_vap_get_core(vap_handle);
   net_state = mtlk_core_get_net_state(cur_core);
-  if (net_state != NET_STATE_CONNECTED)
+  if ((net_state != NET_STATE_CONNECTED) && (net_state != NET_STATE_ACTIVATING))
   {
     ELOG_D("VAP not yet activated, net_state=0x%x", net_state);
     return MTLK_ERR_NOT_READY;
@@ -13104,24 +13275,28 @@ void* __MTLK_IFUNC wave_card_radio_descr_get(mtlk_hw_t *hw)
 #define WAVE_HW_RX_HD_VAP_MASK_GEN6_SB_SC_31_1 0x1F
 
 static wave_radio_limits_t hw_radio_limits_sb_g5[] = {
-  { 16, 128 },
-  {  0,   0 }
+  /* max_vaps | max_stas | master_vap_id */
+  { 16, 128, 15 },
+  {  0,   0,  0 }
 };
 
 static wave_radio_limits_t hw_radio_limits_sb_g6[] = {
-  { 16, 255 }, /* Current limitation for Gen6 */
-  {  0,   0 }
+  /* max_vaps | max_stas | master_vap_id */
+  { 16, 255, 15 }, /* Current limitation for Gen6 */
+  {  0,   0,  0 }
 };
 
 static wave_radio_limits_t hw_radio_limits_db[] = {
-  { 8, 127 },  /* Current limitation for Gen6 */
-  { 8, 127 }
+  /* max_vaps | max_stas | master_vap_id */
+  { 8, 127, 7 },  /* Current limitation for Gen6 */
+  { 8, 127, 7 }
 };
 
 /* FIXME: Need to start using radio limits corresponding to scan band configuration mode
  * static wave_radio_limits_t hw_radio_limits_sc[] = {
- *   { 31, 255 },
- *   {  1,   0 }
+ * max_vaps | max_stas | master_vap_id
+ *   { 31, 255, 30 },
+ *   {  1,   0,  0 }
  * };
  */
 
@@ -13539,32 +13714,23 @@ int scan_get_aocs_info (mtlk_core_t *core, struct intel_vendor_channel_data *ch_
 }
 
 void __MTLK_IFUNC
-mtlk_hw_save_chan_statistics_info (mtlk_hw_t *hw, struct mtlk_chan_def *ccd, struct intel_vendor_channel_data *ch_data, BOOL ch_radar_noise)
+mtlk_hw_save_chan_statistics_info (mtlk_hw_t *hw, uint8 radio_id, struct intel_vendor_channel_data *ch_data, BOOL ch_radar_noise)
 {
   hw_statistics_t    *hw_stats;
   int chip_id = __hw_mmb_get_chip_id(hw);
-  mtlk_hw_band_e band = ccd->chan.band;
   unsigned idx = channum2cssidx(ch_data->channel);
-
-  MTLK_ASSERT((MTLK_HW_BAND_2_4_GHZ == band) || (MTLK_HW_BAND_5_2_GHZ == band));
-
-  if (!(MTLK_HW_BAND_2_4_GHZ == band) &&
-      !(MTLK_HW_BAND_5_2_GHZ == band)) {
-    ELOG_D("Can't save statistics for unsupported band %d", band);
-    return;
-  }
 
   hw_stats = &hw->hw_stats;
   hw->chan_statistics[idx].ch_number                = ch_data->channel;
 
   mtlk_osal_lock_acquire(&hw_stats->lock);
-  hw->chan_statistics[idx].ch_utilization_total     = MTLK_GET_STATS(hw_stats->stats_copy, currentChannelStats.channelUtilizationStats[band].chUtilizationTotal, chip_id);
-  hw->chan_statistics[idx].ch_utilization_busy      = MTLK_GET_STATS(hw_stats->stats_copy, currentChannelStats.channelUtilizationStats[band].chUtilizationBusy, chip_id);
-  hw->chan_statistics[idx].ch_utilization_busy_tx   = MTLK_GET_STATS(hw_stats->stats_copy, currentChannelStats.channelUtilizationStats[band].chUtilizationBusyTx, chip_id);
-  hw->chan_statistics[idx].ch_utilization_busy_rx   = MTLK_GET_STATS(hw_stats->stats_copy, currentChannelStats.channelUtilizationStats[band].chUtilizationBusyRx, chip_id);
-  hw->chan_statistics[idx].ch_utilization_busy_self = MTLK_GET_STATS(hw_stats->stats_copy, currentChannelStats.channelUtilizationStats[band].chUtilizationBusySelf, chip_id);
-  hw->chan_statistics[idx].ch_utilization_busy_ext  = MTLK_GET_STATS(hw_stats->stats_copy, currentChannelStats.channelUtilizationStats[band].chUtilizationBusyExt, chip_id);
-  hw->chan_statistics[idx].ch_non_80211_noise       = MTLK_GET_STATS(hw_stats->stats_copy, phyStatistics.devicePhyRxStatus[band].CWIvalue, chip_id);
+  hw->chan_statistics[idx].ch_utilization_total     = MTLK_GET_STATS(hw_stats->stats_copy, currentChannelStats.channelUtilizationStats[radio_id].chUtilizationTotal, chip_id);
+  hw->chan_statistics[idx].ch_utilization_busy      = MTLK_GET_STATS(hw_stats->stats_copy, currentChannelStats.channelUtilizationStats[radio_id].chUtilizationBusy, chip_id);
+  hw->chan_statistics[idx].ch_utilization_busy_tx   = MTLK_GET_STATS(hw_stats->stats_copy, currentChannelStats.channelUtilizationStats[radio_id].chUtilizationBusyTx, chip_id);
+  hw->chan_statistics[idx].ch_utilization_busy_rx   = MTLK_GET_STATS(hw_stats->stats_copy, currentChannelStats.channelUtilizationStats[radio_id].chUtilizationBusyRx, chip_id);
+  hw->chan_statistics[idx].ch_utilization_busy_self = MTLK_GET_STATS(hw_stats->stats_copy, currentChannelStats.channelUtilizationStats[radio_id].chUtilizationBusySelf, chip_id);
+  hw->chan_statistics[idx].ch_utilization_busy_ext  = MTLK_GET_STATS(hw_stats->stats_copy, currentChannelStats.channelUtilizationStats[radio_id].chUtilizationBusyExt, chip_id);
+  hw->chan_statistics[idx].ch_non_80211_noise       = MTLK_GET_STATS(hw_stats->stats_copy, phyStatistics.devicePhyRxStatus[radio_id].CWIvalue, chip_id);
   mtlk_osal_lock_release(&hw_stats->lock);
 
   hw->chan_statistics[idx].ch_radar_noise = ch_radar_noise;

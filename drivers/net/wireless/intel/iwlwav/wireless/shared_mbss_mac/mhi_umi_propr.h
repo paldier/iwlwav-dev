@@ -83,6 +83,7 @@ typedef enum _ChannelNotificationMode_e
 #define REGD_CODE_AUSTRALIA  0x44
 #define REGD_CODE_BRAZIL     0x45
 #define REGD_CODE_CHINA      0x46
+#define REGD_CODE_KOREA      0x47
 
 #define REGD_CODE_APAC       0x50
 #define REGD_CODE_JAPAN      0x51
@@ -109,7 +110,7 @@ typedef enum _ChannelNotificationMode_e
 #define CHAN_PARAMS_CHAN_BANDWIDTH_MAX			(4)
 
 #define CHAN_PARAMS_CHAN_SWITCH_TIME_MIN		(0)
-#define CHAN_PARAMS_CHAN_SWITCH_TIME_MAX		(1000)
+#define CHAN_PARAMS_CHAN_SWITCH_TIME_MAX		(3000)	/* Customer typically uses 2500 */
 
 #define CHAN_PARAMS_CHAN_SWITCH_TYPE_MIN		(0)
 #define CHAN_PARAMS_CHAN_SWITCH_TYPE_MAX		(5)
@@ -190,9 +191,8 @@ typedef struct _UM_SET_CHAN_PARAMS
 	uint32	csaMcDeauthFramesLocation[GEN6_MAX_VAP]; // Indicates the MC DEAUTH frames location
 
 	//word #44
-	uint8	csaTxUcDeauthStartTime; // Indicates how long before the switch the AP shall transmit UC DEAUTH frames relative to chan_switch_time. Value is used by FW as follows Start = 1/2^val. Start is a fraction of chan_switch_time.   
-	uint8	csaTxMcDeauthStartTime; // indicates how long before the switch the AP shall transmit MC DEAUTH frames relative to chan_switch_time. Value is used by FW as follows Start = 1/2^val. Start is a fraction of chan_switch_time.
-	uint8	reserved4[2];
+	uint16	csaTxUcDeauthStartTime; // Timer value which indicates when the AP shall transmit UC DEAUTH frames (e.g. chan_switch_time - 3 beacon intervals).
+	uint16	csaTxMcDeauthStartTime; // Timer value which indicates when the AP shall transmit MC DEAUTH frames (e.g. chan_switch_time - 2 beacon interval). 
 
 	//word #45 - word #52
 	uint8	csaMcDeauthFrameLength[GEN6_MAX_VAP]; // Indicates the MC DEAUTH frame length per VAP.

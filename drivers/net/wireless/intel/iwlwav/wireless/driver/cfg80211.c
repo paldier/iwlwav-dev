@@ -642,6 +642,22 @@ uint32 wv_cfg80211_get_scan_expire_time(struct wireless_dev *wdev)
   return cfg80211_get_scan_expire_time(wdev->wiphy) / HZ;
 }
 
+void wv_cfg80211_set_out_of_scan_caching(struct wireless_dev *wdev, int is_active)
+{
+  MTLK_ASSERT(wdev);
+  MTLK_ASSERT(wdev->wiphy);
+
+  wdev->wiphy->out_of_scan_caching = !!is_active;
+}
+
+int wv_cfg80211_get_out_of_scan_caching(struct wireless_dev *wdev)
+{
+  MTLK_ASSERT(wdev);
+  MTLK_ASSERT(wdev->wiphy);
+
+  return wdev->wiphy->out_of_scan_caching;
+}
+
 void __MTLK_IFUNC
 wv_cfg80211_update_wiphy_ant_mask(struct wiphy *wiphy, uint8 available_ant_mask)
 {

@@ -26,6 +26,9 @@
 #define NUM_OF_RX_FRAMES       (4)
 #define HAL_LEGACY_NSS         (0)
 
+#define HAL_MAX_RU_ALLOCATIONS_DRV (74)
+#define HAL_MAX_BSR                (8)
+
 typedef struct _WifiAssociatedDev2_t
 {
   unsigned long DataFramesSentAck;
@@ -52,8 +55,6 @@ typedef struct _WifiAssociatedDev2_t
   bool Active;
 } wifiAssociatedDevDiagnostic2_t;
 
-#define     MAX_RU_ALLOCATIONS  74
-#define     MAX_BSR 32
 
 /* below Enum is defined similar to wifi_hal.h, for validating the Tx/Rx stats */
 enum Tx_Rx_flag {
@@ -133,6 +134,14 @@ typedef struct _ChannelStatistics_t {
   uint64 ch_utilization_busy_ext;
 } mtlk_channel_stats;
 
+typedef struct _PhyChannelStatistics_t {
+  int8 noise;                 /* noise                        dBm */
+  uint8 ch_load;              /* channel_load             0..100% */
+  uint8 ch_util;              /* totalChannelUtilization  0..100% */
+  uint8 airtime;              /* 0..100%                          */
+  uint32 airtime_efficiency;  /* bytes/sec                        */
+} mtlk_phy_channel_status;
+
 typedef struct _PeerTidStats_t {
   uint8 ac;
   uint8 tid;
@@ -156,11 +165,11 @@ typedef enum
 
 /* Result3 data structures */
 typedef enum {
-    wifi_access_category_background,
-    wifi_access_category_best_effort,
-    wifi_access_category_video,
-    wifi_access_category_voice,
-} wifi_access_category_t;
+    wlanAccessCategoryBackground,
+    wlanAccessCategoryBestEffort,
+    wlanAccessCategoryVideo,
+    wlanAccessCategoryVoice,
+} wlanAccessCategory_t;
 
 typedef enum {
     WIFI_RU_TYPE_26,
@@ -170,80 +179,78 @@ typedef enum {
     WIFI_RU_TYPE_484,
     WIFI_RU_TYPE_996,
     WIFI_RU_TYPE_1024,
-} wifi_ru_type_t;
+} wlanRuType_t;
 
 typedef enum {
     WIFI_DL_MU_TYPE_NONE,
     WIFI_DL_MU_TYPE_HE,
     WIFI_DL_MU_TYPE_MIMO,
     WIFI_DL_MU_TYPE_HE_MIMO
-} wifi_dl_mu_type_t;
+} wlanDlMuType_t;
 
 typedef struct {
-    wifi_access_category_t  access_category;
-    uint32 queue_size;
-} wifi_bsr_t;
+    wlanAccessCategory_t  accessCategory;
+    uint32 queueSize;
+} wlanBsr_t;
 
 typedef struct {
-    wifi_ru_type_t  type;
+    wlanRuType_t  type;
     unsigned char   subchannels;
-} wifi_ru_allocation_t;
+} wlanRuAllocation_t;
 
 typedef enum {
     WIFI_UL_MU_TYPE_NONE,
     WIFI_UL_MU_TYPE_HE,
-} wifi_ul_mu_type_t;
+} wlanUlMuType_t;
 
 typedef enum {
-    wifi_twt_agreement_type_individual,
-    wifi_twt_agreement_type_broadcast,
-} wifi_twt_agreement_type_t;
+    wlanTwtAgreementTypeIndividual,
+    wlanTwtAgreementTypeBroadcast,
+} wlanTwtAgreementType_t;
 
 typedef struct {
     bool implicit;
     bool announced;
-    bool trigger_enabled;
-} wifi_twt_operation_t;
+    bool triggerEnabled;
+} wlanTwtOperation_t;
 
 typedef struct {
-    uint32 wake_time;
-    uint32 wake_interval;
-    uint32 min_wake_duration;
+    uint32 wakeTime;
+    uint32 wakeInterval;
+    uint32 minWakeDuration;
     uint32 channel;
-} wifi_twt_individual_params_t;
+} wlanTwtIndividualParams_t;
 
 typedef struct {
-    uint32 traget_beacon;
-    uint32 listen_interval;
-} wifi_twt_broadcast_params_t;
+    uint32 tragetBeacon;
+    uint32 listenInterval;
+} wlanTwtBroadcastParams_t;
 
 typedef struct {
-    wifi_bsr_t              BufferStatus[MAX_BSR];
-    wifi_ru_allocation_t    DownlinkRuAllocations[MAX_RU_ALLOCATIONS];
-    wifi_dl_mu_type_t       DownlinkMuType;
-    unsigned char           AllocatedDownlinkRuNum;
-} wifi_dl_mu_stats_t;
+    wlanBsr_t            BufferStatus[HAL_MAX_BSR];
+    wlanRuAllocation_t   DownlinkRuAllocations[HAL_MAX_RU_ALLOCATIONS_DRV];
+    wlanDlMuType_t       DownlinkMuType;
+    unsigned char        AllocatedDownlinkRuNum;
+} wlanDlMuStats_t;
 
 typedef struct {
-    wifi_bsr_t           BufferStatus[MAX_BSR];
-    wifi_ru_allocation_t UplinkRuAllocations[MAX_RU_ALLOCATIONS];
-    wifi_ul_mu_type_t    UpinkMuType;
+    wlanBsr_t            BufferStatus[HAL_MAX_BSR];
+    wlanRuAllocation_t   UplinkRuAllocations[HAL_MAX_RU_ALLOCATIONS_DRV];
+    wlanUlMuType_t       UpinkMuType;
     unsigned char        ChannelStateInformation;
     unsigned char        AllocatedUplinkRuNum;
-} wifi_ul_mu_stats_t;
+} wlanUlMuStats_t;
 
 typedef struct {
-    wifi_twt_agreement_type_t agreement;
-    wifi_twt_operation_t      operation;
+    wlanTwtAgreementType_t  agreementType;
+    wlanTwtOperation_t      operation;
     union {
-        wifi_twt_individual_params_t  individual;
-        wifi_twt_broadcast_params_t   broadcast;
+        wlanTwtIndividualParams_t  individual;
+        wlanTwtBroadcastParams_t   broadcast;
     } patams;
-} wifi_twt_params_t;
+} wlanTwtParams_t;
 
 typedef struct _WifiAssociatedDev3_t{
-      /* Defination of this struct wifiAssociatedDevDiagnostic2_t
-         will be committed as a part of result2 PR */
       uint64 PacketsSent;
       uint64 PacketsReceived;
       uint64 ErrorsSent;
@@ -254,12 +261,9 @@ typedef struct _WifiAssociatedDev3_t{
       uint32 MaxDownlinkRate;
       uint32 MaxUplinkRate;
       wifiAssociatedDevDiagnostic2_t wifiAssociatedDevDiagnostic2;
-/* TOBE implemeted - FW dependency */
-#if 0
-      wifi_ul_mu_stats_t  UplinkMuStats;
-      wifi_dl_mu_stats_t  DownlinkMuStats;
-#endif
-      wifi_twt_params_t   TwtParams;
+      wlanUlMuStats_t  UplinkMuStats;
+      wlanDlMuStats_t  DownlinkMuStats;
+      wlanTwtParams_t  TwtParams;
 } wifiAssociatedDevDiagnostic3_t;
 
 #endif /* _HAL_STATISTICS_H_ */

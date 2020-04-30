@@ -197,7 +197,11 @@ int mtlk_nl_send_brd_msg(void *data, int length, gfp_t flags, u32 dst_group, u8 
   send_group = dst_group;
   genl_res = genlmsg_multicast(&mtlk_genl_family, skb, 0, send_group, flags);
 
-  if (genl_res) {
+  if (genl_res == -ESRCH) {
+    /* We don't care if no one is listening  */
+    ILOG1_DD("No listeners available : Error %d sending netlink message (msgid=%u)", genl_res, mhdr->cmd_id);
+    return MTLK_ERR_OK;
+  } else if (genl_res) {
     mtlk_osal_emergency_print("Error %d sending netlink message (msgid=%u)", genl_res, mhdr->cmd_id);
     return MTLK_ERR_UNKNOWN;
   } else

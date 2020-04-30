@@ -23,6 +23,7 @@
 #include "ieee80211.h"
 #include "SharedDbTypes.h"
 #include "TwtManager_API.h"
+#include "TwtManager.h"
 #include "Utils_Api.h"
 
 #else
@@ -42,6 +43,7 @@
 #define MAX_USP_IN_VHT_GROUP 				(4)
 #define NUM_OF_MCS							(0xB)
 #define NUM_OF_EXTENTION_RSSI				(4)
+#define TWT_MAX_AGREEMENTS_ALLOWED			(1)
 
 #if !defined GEN6_NUM_OF_BANDS
 #define GEN6_NUM_OF_BANDS 					(2)
@@ -187,6 +189,37 @@ typedef struct
 } RxCounters_t;
 #else
 } RxCounters_t_wave600b;
+#endif
+
+typedef struct 
+{
+	uint16 bufStsCnt0;
+	uint16 bufStsCnt1;
+	uint16 bufStsCnt2;
+	uint16 bufStsCnt3;
+	uint16 bufStsCnt4;
+	uint16 bufStsCnt5;
+	uint16 bufStsCnt6;
+	uint16 bufStsCnt7;
+	uint8 maskSelBitmap;
+	uint8 reserved[3];
+#ifdef CPU_ARC
+} UplinkBsrcPerTidCnt_t;
+#else
+} UplinkBsrcPerTidCnt_t_wave600b;
+#endif
+
+typedef struct 
+{
+#ifdef CPU_ARC
+	UplinkBsrcPerTidCnt_t BsrcPerTidCnt[HW_NUM_OF_STATIONS];
+#else
+	UplinkBsrcPerTidCnt_t_wave600b BsrcPerTidCnt[HW_NUM_OF_STATIONS];
+#endif
+#ifdef CPU_ARC
+} UplinkBsrcTidCnt_t;
+#else
+} UplinkBsrcTidCnt_t_wave600b;
 #endif
 
 typedef struct 
@@ -419,6 +452,45 @@ typedef struct
 
 typedef struct 
 {
+	uint8 downlinkMuType;
+	uint8 dlRuSubChannels;
+	uint8 dlRuType;
+	uint8 reserved;
+#ifdef CPU_ARC
+} dl_mu_stats_t;
+#else
+} dl_mu_stats_t_wave600b;
+#endif
+
+typedef struct 
+{
+	uint8 uplinkMuType;
+	uint8 ulRuSubChannels;
+	uint8 ulRuType;
+	uint8 reserved;
+#ifdef CPU_ARC
+} ul_mu_stats_t;
+#else
+} ul_mu_stats_t_wave600b;
+#endif
+
+typedef struct 
+{
+#ifdef CPU_ARC
+	ul_mu_stats_t uplinkMuStats[HW_NUM_OF_STATIONS];
+	dl_mu_stats_t downlinkMuStats[HW_NUM_OF_STATIONS];
+#else
+	ul_mu_stats_t_wave600b uplinkMuStats[HW_NUM_OF_STATIONS];
+	dl_mu_stats_t_wave600b downlinkMuStats[HW_NUM_OF_STATIONS];
+#endif
+#ifdef CPU_ARC
+} PlanManagerStatistics_t;
+#else
+} PlanManagerStatistics_t_wave600b;
+#endif
+
+typedef struct 
+{
 	uint32 ratesMask[TX_MU_GROUPS][MAX_USP_IN_VHT_GROUP];
 	uint32 protectionSentCounter[TX_MU_GROUPS];
 	uint32 protectionSucceededCounter[TX_MU_GROUPS];
@@ -461,8 +533,86 @@ typedef struct
 
 typedef struct 
 {
-	uint32 numOfAgreementsForSta[HW_NUM_OF_STATIONS];
-	uint32 numOfStaInSp[MAX_NUM_OF_SP];					
+	uint8 implicit;
+	uint8 announced;
+	uint8 triggerEnabled;
+	uint8 reserved;
+#ifdef CPU_ARC
+} twt_operation_t;
+#else
+} twt_operation_t_wave600b;
+#endif
+
+typedef struct 
+{
+	uint32 wakeTimeHigh;
+	uint32 wakeTimeLow;
+	uint32 wakeInterval;
+	uint16 minWakeDuration;
+	uint16 channel;
+#ifdef CPU_ARC
+} twt_individual_params_t;
+#else
+} twt_individual_params_t_wave600b;
+#endif
+
+typedef struct 
+{
+	uint32 tragetBeacon;
+	uint32 listenInterval;
+#ifdef CPU_ARC
+} twt_broadcast_params_t;
+#else
+} twt_broadcast_params_t_wave600b;
+#endif
+
+typedef struct 
+{
+	uint16 state;
+	uint16 agreementType;
+#ifdef CPU_ARC
+	twt_operation_t operation;
+	union 
+	{
+		twt_individual_params_t individual;
+		twt_broadcast_params_t broadcast;
+	} params;
+#else
+	twt_operation_t_wave600b operation;
+	union 
+	{
+		twt_individual_params_t_wave600b individual;
+		twt_broadcast_params_t_wave600b broadcast;
+	} params;
+#endif
+#ifdef CPU_ARC
+} twt_agreement_t;
+#else
+} twt_agreement_t_wave600b;
+#endif
+
+typedef struct 
+{
+	uint32 numOfAgreementsForSta;
+#ifdef CPU_ARC
+	twt_agreement_t twtAgreement[TWT_MAX_AGREEMENTS_ALLOWED];
+#else
+	twt_agreement_t_wave600b twtAgreement[TWT_MAX_AGREEMENTS_ALLOWED];
+#endif
+#ifdef CPU_ARC
+} twt_params_t;
+#else
+} twt_params_t_wave600b;
+#endif
+
+typedef struct 
+{
+	uint32 numOfStaInSp[MAX_NUM_OF_SP];
+#ifdef CPU_ARC
+	twt_params_t twtStaParams[HW_NUM_OF_STATIONS];
+#else
+	twt_params_t_wave600b twtStaParams[HW_NUM_OF_STATIONS];
+#endif
 #ifdef CPU_ARC
 } TwtStatistics_t;
 #else
@@ -482,8 +632,8 @@ typedef struct
 
 typedef struct 
 {
-	uint8 	maxRssi[HW_NUM_OF_STATIONS];
-	uint8	minRssi[HW_NUM_OF_STATIONS];	
+	int8 	maxRssi[HW_NUM_OF_STATIONS];
+	int8	minRssi[HW_NUM_OF_STATIONS];	
 #ifdef CPU_ARC
 } AlphaFilterStatistics_t;
 #else
@@ -528,6 +678,17 @@ typedef struct
 	uint32 successCount[HW_NUM_OF_STATIONS];
 	uint32 exhaustedCount[HW_NUM_OF_STATIONS];
 	uint32 clonedCount[HW_NUM_OF_STATIONS];
+	uint32 oneOrMoreRetryCount[HW_NUM_OF_STATIONS];
+	uint32 packetRetransCount[HW_NUM_OF_STATIONS];
+	uint32 dropCntReasonClassifier[HW_NUM_OF_STATIONS];
+	uint32 dropCntReasonDisconnect[HW_NUM_OF_STATIONS];
+	uint32 dropCntReasonATF[HW_NUM_OF_STATIONS];
+	uint32 dropCntReasonTSFlush[HW_NUM_OF_STATIONS];
+	uint32 dropCntReasonReKey[HW_NUM_OF_STATIONS];
+	uint32 dropCntReasonSetKey[HW_NUM_OF_STATIONS];
+	uint32 dropCntReasonDiscard[HW_NUM_OF_STATIONS];
+	uint32 dropCntReasonDsabled[HW_NUM_OF_STATIONS];
+	uint32 dropCntReasonAggError[HW_NUM_OF_STATIONS];
 	/* RX */
 	uint32 mpduRetryCount[HW_NUM_OF_STATIONS];	/* Number of rx retries			*/
 	uint32 mpduInAmpdu[HW_NUM_OF_STATIONS];		/* Number of MPDUs received		*/
@@ -685,6 +846,7 @@ typedef struct _StatisticsDb_t
     HostIfCounters_t										hostIfCounters;
     RxCounters_t											rxCounters;
     BaaCounters_t											baaCounters;
+    UplinkBsrcTidCnt_t										uplinkBsrcTidCnt;
     TsManagerInitiatorTidGlobalStatistics_t					tsManagerInitiatorTidGlobalStats;
     TsManagerInitiatorStationGlobalStatistics_t				tsManagerInitiatorStationGlobalStats;
     TsManagerRecipientTidGlobalStatistics_t					tsManagerRecipientTidGlobalStats;
@@ -696,6 +858,7 @@ typedef struct _StatisticsDb_t
     LinkAdaptationMuStatistics_t							linkAdaptationMuStats;
     PtaStatistics_t											ptaStats;
     TwtStatistics_t											twtStats;
+    PlanManagerStatistics_t									planManagerStats;
     AlphaFilterStatistics_t									alphaFilterStats;
     PerClientStatistics_t									perClientStats;
     GeneralStatistics_t										generalStats;
@@ -710,6 +873,7 @@ typedef struct _StatisticsDb_t_wave600b
 	HostIfCounters_t_wave600b 								hostIfCounters;
 	RxCounters_t_wave600b									rxCounters;
 	BaaCounters_t_wave600b									baaCounters;
+	UplinkBsrcTidCnt_t_wave600b								uplinkBsrcTidCnt;
 	TsManagerInitiatorTidGlobalStatistics_t_wave600b		tsManagerInitiatorTidGlobalStats;
 	TsManagerInitiatorStationGlobalStatistics_t_wave600b	tsManagerInitiatorStationGlobalStats;
 	TsManagerRecipientTidGlobalStatistics_t_wave600b		tsManagerRecipientTidGlobalStats;
@@ -721,6 +885,7 @@ typedef struct _StatisticsDb_t_wave600b
 	LinkAdaptationMuStatistics_t_wave600b					linkAdaptationMuStats;
 	PtaStatistics_t_wave600b								ptaStats;
 	TwtStatistics_t_wave600b								twtStats;
+	PlanManagerStatistics_t_wave600b						planManagerStats;
 	AlphaFilterStatistics_t_wave600b						alphaFilterStats;
 	PerClientStatistics_t_wave600b							perClientStats;
 	GeneralStatistics_t_wave600b							generalStats;

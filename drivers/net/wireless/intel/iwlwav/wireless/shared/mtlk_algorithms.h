@@ -236,4 +236,7 @@ do {                                                                     \
 #endif /* __KERNEL__*/
 #endif /* WAVE_MEMCPY_UNSAFE */
 
+#define wave_wordcpy(dest, dmax, src, smax) \
+          wave_memcpy(dest, ((dmax) * sizeof(uint32)), src, ((smax) * sizeof(uint32)))
+
 #endif //_MTLK_ALGORITHMS_H_

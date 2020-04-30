@@ -100,7 +100,7 @@ mtlk-objs += wireless/driver/eth_parser.o
 # Based on generated c file and therfore should be compiled last
 mtlk-objs += tools/rtlogger/shared/logmacro_database.o
 
-ccflags-y += -DLOG_LOCAL_OID=8 -DMTLK_COPYRIGHT="\"\"" -DMTLK_SOURCE_VERSION="\"$(_MTLK_VERSION).$(_REVISION_VERSION)\"" -Wno-multichar
+ccflags-y += -DLOG_LOCAL_OID=8 -DMTLK_COPYRIGHT="\"\"" -DMTLK_SOURCE_VERSION="\"$(_MTLK_VERSION).$(_REVISION_VERSION)\"" -Wno-multichar -Werror
 ccflags-y += -I$(src)
 ccflags-y += -I$(src)/wireless/driver
 ccflags-y += -I$(src)/wireless/driver/linux

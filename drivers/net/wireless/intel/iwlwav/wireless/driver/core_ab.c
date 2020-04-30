@@ -89,6 +89,7 @@ static const mtlk_ability_id_t _core_general_abilities[] = {
   WAVE_CORE_REQ_GET_TR181_PEER_STATS,
   WAVE_CORE_REQ_GET_DEV_DIAG_RESULT2,
   WAVE_CORE_REQ_GET_DEV_DIAG_RESULT3,
+  WAVE_CORE_REQ_SET_CHAN_SWITCH_DEAUTH_PARAMS,
 };
 
 static const mtlk_ability_id_t _core_ap_general_abilities[] = {

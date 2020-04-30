@@ -272,6 +272,10 @@ typedef enum{
 	DUT_SET_TX_BAND_CFM,
 	DUT_SET_TX_BAND_LUT_REQ,
 	DUT_SET_TX_BAND_LUT_CFM,
+	DUT_GET_BBIC_CDD_REQ,
+	DUT_GET_BBIC_CDD_CFM,
+	DUT_SET_BBIC_CDD_REQ,
+	DUT_SET_BBIC_CDD_CFM,
 	// Dut Tx Module Messages
 	DUT_START_TX_REQ	= 0x200,
 	DUT_START_TX_CFM,
@@ -884,7 +888,23 @@ typedef struct dutRxEnableAggregate
 } dutRxEnableAggregate_t;
 
 
+typedef struct dutSetBbicCdd
+{
+	uint8		antNum;    // range 1,2,3,4
+	uint8		reserved[3];
+	uint32		offset1_rtrn;
+	uint32		offset2_rtrn;
+	uint32		offset3_rtrn;
+} __MTLK_PACKED dutSetBbicCdd_t;
 
+typedef struct dutGetBbicCdd
+{
+	uint8		antNum;    // range 1,2,3,4
+	uint8		reserved[3];	
+	uint32		offset1_rtrn;
+	uint32		offset2_rtrn;
+	uint32		offset3_rtrn;
+} __MTLK_PACKED dutGetBbicCdd_t;
 
 #define MTLK_PACK_OFF
 #include "mtlkpack.h"

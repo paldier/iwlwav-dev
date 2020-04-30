@@ -416,9 +416,21 @@ _mtlk_pcieg5_ccr_get_hw_dump_info (void *ccr_mem, wave_hw_dump_info_t **hw_dump_
 static int
 _mtlk_pcieg5_ccr_get_fw_dump_info (void *ccr_mem, wave_fw_dump_info_t **fw_info)
 {
+  size_t alloc_size;
+
   MTLK_UNREFERENCED_PARAM(ccr_mem);
   MTLK_ASSERT(NULL != fw_info);
-  *fw_info = &g5_proc_fw_dump_files[0];
+  MTLK_ASSERT(NULL == fw_info);
+
+  alloc_size = sizeof(g5_proc_fw_dump_files);
+  *fw_info = mtlk_osal_mem_alloc(alloc_size, LQLA_MEM_TAG_FW_RECOVERY);
+  if (*fw_info == NULL) {
+    ELOG_V("Failed to alloc memory for fw_info");
+    return MTLK_ERR_NO_MEM;
+  }
+
+  wave_memcpy(*fw_info, alloc_size, &g5_proc_fw_dump_files[0], sizeof(g5_proc_fw_dump_files));
+
   return ARRAY_SIZE(g5_proc_fw_dump_files);
 }
 

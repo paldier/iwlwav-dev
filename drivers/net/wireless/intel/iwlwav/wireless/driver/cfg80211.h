@@ -50,6 +50,9 @@ void wv_cfg80211_set_chan_dfs_state(struct wiphy *wiphy, uint32 center_freq, uin
 void wv_cfg80211_set_scan_expire_time(struct wireless_dev *wdev, uint32 time);
 uint32 wv_cfg80211_get_scan_expire_time(struct wireless_dev *wdev);
 
+void wv_cfg80211_set_out_of_scan_caching(struct wireless_dev *wdev, int is_active);
+int wv_cfg80211_get_out_of_scan_caching(struct wireless_dev *wdev);
+
 BOOL _mtlk_is_rate_80211b(uint32 bitrate);
 BOOL _mtlk_is_rate_80211ag(uint32 bitrate);
 void __MTLK_IFUNC

@@ -252,7 +252,8 @@ _mtlk_core_cfg_wmm_param_set_ap(mtlk_core_t *master_core)
 }
 
 /* Should be called from master serializer context */
-static int core_cfg_wmm_param_set_by_params(mtlk_core_t *master_core, mtlk_core_t *core)
+int __MTLK_IFUNC
+core_cfg_wmm_param_set_by_params(mtlk_core_t *master_core, mtlk_core_t *core)
 {
   unsigned                   oid;
   int                        res = MTLK_ERR_OK;
@@ -260,6 +261,12 @@ static int core_cfg_wmm_param_set_by_params(mtlk_core_t *master_core, mtlk_core_
   MTLK_ASSERT(master_core == mtlk_core_get_master(master_core));
 
   oid = mtlk_vap_get_oid(master_core->vap_handle);
+
+  /* Prevent setting WMM before ADD_VAP */
+  if (core->is_stopped) {
+    res = MTLK_ERR_NOT_READY;
+    goto end;
+  }
 
   /* Prevent setting WMM while waiting for beacons */
   if (mtlk_core_is_block_tx_mode(master_core)) {
@@ -432,32 +439,16 @@ mtlk_core_cfg_update_antenna_mask (mtlk_core_t *core, uint8 ant_mask)
 }
 
 static int
-_mtlk_core_send_erp_if_needed (mtlk_core_t *core)
+_mtlk_core_activate_erp_if_needed (mtlk_core_t *core, uint8  switch_type)
 {
   int res;
-  mtlk_erp_cfg_t erp_cfg;
-  mtlk_pdb_size_t erp_size = sizeof(mtlk_erp_cfg_t);
+  mtlk_erp_t *erp_obj = __wave_core_erp_mgmt_get(core);
 
-  res = WAVE_RADIO_PDB_GET_BINARY(wave_vap_radio_get(core->vap_handle), PARAM_DB_RADIO_ERP_CFG, &erp_cfg, &erp_size);
-  if (MTLK_ERR_OK != res) {
-    ELOG_D("CID-%04x: Failed to get ERP configuration", mtlk_vap_get_oid(core->vap_handle));
-    return res;
+  if ((switch_type == ST_NORMAL) && (!mtlk_core_scan_is_running(core))) {
+    res = mtlk_coc_erp_activate(erp_obj);
+  } else {
+    res = mtlk_coc_erp_deactivate(erp_obj);
   }
-
-  /* If Initial wait time is set, this means iwpriv was executed during scan */
-  if (erp_cfg.initial_wait_time) {
-    res = mtlk_core_send_erp_cfg(core, &erp_cfg);
-
-    if (MTLK_ERR_OK != res)
-      return res;
-  }
-
-  /* Clear values in param DB, as they are used for postponing the sending after scan */
-  memset(&erp_cfg, 0, sizeof(erp_cfg));
-  erp_size = sizeof(mtlk_erp_cfg_t);
-  if (MTLK_ERR_OK != WAVE_RADIO_PDB_SET_BINARY(wave_vap_radio_get(core->vap_handle), PARAM_DB_RADIO_ERP_CFG, &erp_cfg, erp_size))
-    ELOG_D("CID-%04x: Failed to clear ERP config in paramDB", mtlk_vap_get_oid(core->vap_handle));
-
   return res;
 }
 
@@ -488,6 +479,16 @@ int core_cfg_send_set_chan(mtlk_core_t *core,
   int                   res = MTLK_ERR_OK;
   mtlk_hw_t             *hw = mtlk_vap_get_hw(core->vap_handle);
   BOOL skip_set_chan_zwdfs = FALSE;
+  uint32                csa_deauth_mode_per_vap = 0, max_vaps_count = 0, vap_num = 0;
+  uint32                uc_vap_bitmap = 0, mc_vap_bitmap = 0, mapped_addr = 0;
+  uint16                beacon_int = 0, csa_uc_deauth_tx_time = 0, csa_mc_deauth_tx_time = 0;
+  uint8                 vap_id = 0, *frame_buf[INTEL_MAX_VAP];
+  BOOL                  enc_frame = FALSE;
+  mtlk_pdb_size_t       data_size = 0;
+  mtlk_vap_handle_t     vap_handle;
+  mtlk_vap_manager_t    *vap_mgr;
+  mtlk_core_t           *vap_core;
+  struct intel_vendor_channel_switch_cfg vendor_cs_cfg;
 
   if (wave_radio_get_is_zwdfs_radio(radio) &&
       !wave_hw_zwdfs_antenna_is_active(hw)) {
@@ -570,6 +571,108 @@ int core_cfg_send_set_chan(mtlk_core_t *core,
     req->u16SID = HOST_TO_MAC16(cpd->sid);
     if (!req->isRadarDetectionNeeded)
       req->isRadarDetectionNeeded = cpd->radar_required;
+  }
+
+  if (req->switch_type == ST_CSA) {
+    /* Handle CSA deauth parameters here */
+    memset(req->csaMcDeauthFramesLocation, 0, sizeof(req->csaMcDeauthFramesLocation));
+    memset(req->csaMcDeauthFrameLength, 0, sizeof(req->csaMcDeauthFrameLength));
+    memset(frame_buf, 0, sizeof(frame_buf));
+    req->csaTxMcDeauthStartTime = req->csaTxUcDeauthStartTime = 0;
+    req->csaMcDeAuthVapBitmap = req->csaUcDeAuthVapBitmap = req->csaIsMcDeauthFrameEncrypted = 0;
+    /* Fill in CSA deauth params to UMI structure */
+    data_size = sizeof(vendor_cs_cfg);
+    vap_mgr = mtlk_vap_get_manager(core->vap_handle);
+    max_vaps_count = mtlk_vap_manager_get_max_vaps_count(vap_mgr);
+    for (vap_num = 0; vap_num < max_vaps_count; vap_num++) {
+      if (mtlk_vap_manager_get_vap_handle(vap_mgr, vap_num, &vap_handle) != MTLK_ERR_OK) {
+        ILOG3_D("Can't get VAP handle with num %d", vap_num);
+        continue;
+      }
+      if (!mtlk_vap_is_ap(vap_handle))
+        continue;
+      vap_core = mtlk_vap_get_core(vap_handle);
+      MTLK_ASSERT(NULL != vap_core);
+      if (vap_core->is_stopped)
+        continue;
+      memset(&vendor_cs_cfg, 0, data_size);
+      /* Read vendor parameters for CSA deauth stored under this (master) VAP */
+      res = MTLK_CORE_PDB_GET_BINARY(vap_core,
+                          PARAM_DB_CORE_CSA_DEAUTH_PARAMS, &vendor_cs_cfg, &data_size);
+      if (res != MTLK_ERR_OK || data_size < sizeof(vendor_cs_cfg)) {
+        ELOG_D("CID-%04x: Can't read CSA deauth cfg from PDB", mtlk_vap_get_oid(vap_handle));
+        res = MTLK_ERR_PARAMS;
+        goto end;
+      }
+      csa_deauth_mode_per_vap = vendor_cs_cfg.csaDeauthMode;
+      if (csa_deauth_mode_per_vap == CSA_DEAUTH_MODE_DISABLED) {
+        continue;
+      }
+      /* Tx time is not supported per VAP level by FW, so send the last non-zero value of Tx time
+       * from the VAP list
+       */
+      vap_id = mtlk_vap_get_id(vap_handle);
+      if (csa_deauth_mode_per_vap == CSA_DEAUTH_MODE_UNICAST) {
+        uc_vap_bitmap |= (1 << vap_id);
+        if (vendor_cs_cfg.csaDeauthTxTime[INTEL_CSA_DEAUTH_TX_TIME_UC_IDX])
+          csa_uc_deauth_tx_time = vendor_cs_cfg.csaDeauthTxTime[INTEL_CSA_DEAUTH_TX_TIME_UC_IDX];
+      }
+      else if (csa_deauth_mode_per_vap == CSA_DEAUTH_MODE_BROADCAST) {
+        mc_vap_bitmap |= (1 << vap_id);
+        /* Allocate memory from DMA region for Deauth frame length into frame_bus[vap_id].
+         */
+        frame_buf[vap_id] = mtlk_osal_mem_dma_alloc(vendor_cs_cfg.csaMcDeauthFrameLength * sizeof(vendor_cs_cfg.csaDeauthFrames[0]), MTLK_MEM_TAG_CSA_DEAUTH_DATA);
+        if (!frame_buf[vap_id]) {
+          ELOG_D("Malloc %u bytes for CSA deauth frame failed", vendor_cs_cfg.csaMcDeauthFrameLength * sizeof(vendor_cs_cfg.csaDeauthFrames[0]));
+          res = MTLK_ERR_NO_RESOURCES;
+          goto end;
+        }
+        wave_memcpy(frame_buf[vap_id], vendor_cs_cfg.csaMcDeauthFrameLength * sizeof(vendor_cs_cfg.csaDeauthFrames[0]), vendor_cs_cfg.csaDeauthFrames,
+          vendor_cs_cfg.csaMcDeauthFrameLength * sizeof(vendor_cs_cfg.csaDeauthFrames[0]));
+        /* Map the DMA address allocated above (frame_buf[vap_id]) to physical address and share the physical address with FW post endianess conversion.
+         */
+        mapped_addr = HOST_TO_MAC32(mtlk_osal_map_to_phys_addr(mtlk_ccr_get_dev_ctx(mtlk_hw_mmb_get_ccr(hw)),
+                                                              frame_buf[vap_id], vendor_cs_cfg.csaMcDeauthFrameLength * sizeof(vendor_cs_cfg.csaDeauthFrames[0]),
+                                                              MTLK_DATA_TO_DEVICE));
+        if (!mapped_addr) {
+          ILOG2_P("WARNING: failed mapping 0x%p to physical address", vendor_cs_cfg.csaDeauthFrames);
+          res = MTLK_ERR_NO_RESOURCES;
+          goto end;
+        }
+        req->csaMcDeauthFramesLocation[vap_id] = mapped_addr;
+        req->csaMcDeauthFrameLength[vap_id] = vendor_cs_cfg.csaMcDeauthFrameLength * sizeof(vendor_cs_cfg.csaDeauthFrames[0]);
+        if (req->csaMcDeauthFrameLength[vap_id] > INTEL_NON_PROTECTED_DEAUTH_FRAME_LEN)
+          enc_frame = TRUE;
+        if (vendor_cs_cfg.csaDeauthTxTime[INTEL_CSA_DEAUTH_TX_TIME_MC_IDX])
+          csa_mc_deauth_tx_time = vendor_cs_cfg.csaDeauthTxTime[INTEL_CSA_DEAUTH_TX_TIME_MC_IDX];
+        /* reset mc frames values to zeroes */
+        memset(&vendor_cs_cfg, 0, sizeof(vendor_cs_cfg));
+        MTLK_CORE_PDB_SET_BINARY(vap_core,
+          PARAM_DB_CORE_CSA_DEAUTH_PARAMS, &vendor_cs_cfg, data_size);
+      }
+    }
+    /* If unicast and multicast tx time values are '0' then use default as,
+     * 1 beacon interval for unicast and 2 beacon intervals for multicast.
+     */
+    if (uc_vap_bitmap != 0 || mc_vap_bitmap != 0) {
+      beacon_int = (uint16) MTLK_CORE_PDB_GET_INT(core, PARAM_DB_CORE_BEACON_PERIOD);
+      if (csa_uc_deauth_tx_time != 0) {
+        req->csaTxUcDeauthStartTime = HOST_TO_MAC16(csa_uc_deauth_tx_time);
+      }
+      else {
+        req->csaTxUcDeauthStartTime = HOST_TO_MAC16(beacon_int);
+      }
+      if (csa_mc_deauth_tx_time != 0) {
+        req->csaTxMcDeauthStartTime = HOST_TO_MAC16(csa_mc_deauth_tx_time);
+      }
+      else {
+        req->csaTxMcDeauthStartTime = HOST_TO_MAC16(beacon_int * 2);
+      }
+      req->csaUcDeAuthVapBitmap = HOST_TO_MAC32(uc_vap_bitmap);
+      req->csaMcDeAuthVapBitmap = HOST_TO_MAC32(mc_vap_bitmap);
+      if (enc_frame == TRUE)
+        req->csaIsMcDeauthFrameEncrypted = req->csaMcDeAuthVapBitmap;
+    }
   }
 
   /* leave result and reserved as 0 */
@@ -660,12 +763,37 @@ int core_cfg_send_set_chan(mtlk_core_t *core,
   }
 
   /* Set these params after setting operating channel */
-  if (req->switch_type == ST_NORMAL || req->switch_type == ST_CSA) {
+  if (req->switch_type == ST_NORMAL) { /* not for CSA */
     (void)mtlk_core_set_coc_actual_power_mode(core);
-    (void)_mtlk_core_send_erp_if_needed(core);
+  } else if ((req->switch_type == ST_SCAN) || (req->switch_type == ST_CSA)) { /* SCAN or CSA */
+    (void)mtlk_core_set_coc_pause_power_mode(core);
   }
 
+  (void)_mtlk_core_activate_erp_if_needed(core, req->switch_type);
+
 end:
+  for (vap_num = 0; vap_num < max_vaps_count; vap_num++) {
+    if (mtlk_vap_manager_get_vap_handle(vap_mgr, vap_num, &vap_handle) != MTLK_ERR_OK) {
+      ILOG3_D("Can't get VAP handle with num %d", vap_num);
+      continue;
+    }
+    if (!mtlk_vap_is_ap(vap_handle))
+      continue;
+    vap_id = mtlk_vap_get_id(vap_handle);
+    if (req->csaMcDeauthFramesLocation[vap_id]) {
+      /* Unmap the physical address mapped to the DMA address containing the Deauthentication frame.
+       */
+      mtlk_osal_unmap_phys_addr(mtlk_ccr_get_dev_ctx(mtlk_hw_mmb_get_ccr(hw)),
+                                MAC_TO_HOST32(req->csaMcDeauthFramesLocation[vap_id]), req->csaMcDeauthFrameLength[vap_id],
+                                MTLK_DATA_TO_DEVICE);
+    }
+    /* Free the memory alloc'ed for Deauthentication frame.
+     */
+    if (frame_buf[vap_id]) {
+      ILOG0_D("freeing frame @ %u", frame_buf[vap_id]);
+      mtlk_osal_mem_free(frame_buf[vap_id]);
+    }
+  }
   (void)mtlk_core_radio_disable_if_needed(core);
 
   mtlk_txmm_msg_cleanup(&man_msg);
@@ -716,6 +844,8 @@ int __MTLK_IFUNC core_cfg_set_chan_clpb (mtlk_handle_t hcore, const void* data, 
 
     if (cpd->chan_switch_time)
       cpd->switch_type = ST_CSA;
+    else if (wave_radio_get_cac_pending(radio))
+      cpd->switch_type = ST_SCAN;
 
     if ((!ss->dfs_debug_params.debug_chan
          || (ss->dfs_debug_params.debug_chan &&
@@ -1180,8 +1310,10 @@ int core_cfg_remove_all_sids_if_needed (mtlk_core_t *core)
   uint16 sid;
 
   /* Don't send any message to halted MAC */
-  if (NET_STATE_HALTED == mtlk_core_get_net_state(core))
+  if (NET_STATE_HALTED == mtlk_core_get_net_state(core)) {
+    memset(core->sid_list, 0, SID_LIST_LEN);
     goto FINISH;
+  }
 
   for (index = 0; index < SID_LIST_LEN; index++)
     if (core->sid_list[index])
@@ -1310,7 +1442,6 @@ _core_send_reg_domain_config (mtlk_core_t *core)
     UMI_REG_DOMAIN_CONFIG      *mac_msg;
     int                        res;
     unsigned                   oid;
-    uint8 etsi;
 
     MTLK_ASSERT(core != NULL);
     oid = mtlk_vap_get_oid(core->vap_handle);
@@ -1327,11 +1458,9 @@ _core_send_reg_domain_config (mtlk_core_t *core)
     man_entry->payload_size = sizeof(*mac_msg);
     mac_msg = (UMI_REG_DOMAIN_CONFIG *)man_entry->payload;
 
-    etsi = (REGD_CODE_ETSI == core_cfg_get_regd_code(core)) ? REG_DOMAIN_CONFIGURATION_1 : REG_DOMAIN_CONFIGURATION_0;
+    mac_msg->regDomainConfig = (uint8)wave_core_cfg_get_regd_region(core);
 
-    mac_msg->regDomainConfig = etsi;
-
-    ILOG2_S("Regulatory domain in %s region", etsi ? "ETSI" : "Non-ETSI");
+    ILOG2_DD("CID-%04x: Regulatory domain in %u region", oid, mac_msg->regDomainConfig);
 
     /* Send the message to FW */
     res = mtlk_txmm_msg_send_blocked(&man_msg, MTLK_MM_BLOCKED_SEND_TIMEOUT);
@@ -1449,6 +1578,51 @@ core_cfg_get_regd_code (mtlk_core_t *core)
   return mtlk_psdb_country_to_regd_code(country_code.country);
 }
 
+uint32 __MTLK_IFUNC
+wave_regd_code_to_regd_region (uint32 regd_code)
+{
+  uint32 res;
+  switch (regd_code) {
+  case REGD_CODE_FCC:
+    res = REG_DOMAIN_FCC;   break;
+
+  case REGD_CODE_ETSI:
+  case REGD_CODE_SPAIN:
+  case REGD_CODE_FRANCE:
+  case REGD_CODE_UAE:
+  case REGD_CODE_GERMANY:
+    res = REG_DOMAIN_ETSI;  break;
+
+  case REGD_CODE_MKK:
+  case REGD_CODE_JAPAN:
+    res = REG_DOMAIN_JAPAN;   break;
+
+  case REGD_CODE_CHINA:
+    res = REG_DOMAIN_CHINA;   break;
+
+  case REGD_CODE_KOREA:
+    res = REG_DOMAIN_KOREA;   break;
+
+  default:
+    res = REG_DOMAIN_DEFAULT; break;
+  }
+
+  ILOG3_DD("RegDomain code %u -> type %u", regd_code, res);
+
+  return res;
+}
+
+uint32 __MTLK_IFUNC
+wave_core_cfg_get_regd_region (mtlk_core_t *core)
+{
+  uint32 regd_code;
+
+  MTLK_ASSERT(core);
+
+  regd_code = core_cfg_get_regd_code(core);
+
+  return wave_regd_code_to_regd_region(regd_code);
+}
 
 void __MTLK_IFUNC
 core_cfg_country_code_set_default (mtlk_core_t *core)
@@ -3306,10 +3480,9 @@ mtlk_core_cfg_send_active_ant_mask (mtlk_core_t *core, uint32 mask)
   mtlk_txmm_data_t  *man_entry = NULL;
   UMI_SET_ANTENNAS  *umi_set_antennas = NULL;
   mtlk_vap_handle_t vap_handle = core->vap_handle;
-  mtlk_hw_t         *hw = mtlk_vap_get_hw(vap_handle);
   wave_radio_t      *radio = wave_vap_radio_get(vap_handle);
 
-  MTLK_ASSERT(hw);
+  MTLK_ASSERT(radio);
 
   /* This iwpriv is supported for 5G band only -- the limitation imposed by request from FW team */
   if (mtlk_core_is_band_supported(core, UMI_PHY_TYPE_BAND_5_2_GHZ) != MTLK_ERR_OK) {
@@ -3317,12 +3490,10 @@ mtlk_core_cfg_send_active_ant_mask (mtlk_core_t *core, uint32 mask)
     return MTLK_ERR_OK;
   }
 
-  /* The given antenna mask has to be supported by hardware */
-  if (MTLK_ERR_OK != psdb_get_field_val(mtlk_hw_get_psdb(hw), PSDB_FIELD_TX_ANTENNAS_MASK, &hw_antenna_mask)) {
-    return MTLK_ERR_PARAMS;
-  }
+  /* The given antenna mask has to be supported by hardware per radio */
+  hw_antenna_mask = wave_radio_tx_antenna_mask_get(radio); /* the same for TX/RX */
   if (mask & ~hw_antenna_mask) {
-    ELOG_DD("The given active antenna mask (%u) isn't supported by hardware (%u)", mask, hw_antenna_mask);
+    ELOG_DD("The given active antenna mask (0x%X) isn't supported by hardware (0x%X)", mask, hw_antenna_mask);
     return MTLK_ERR_PARAMS;
   }
 
@@ -4042,6 +4213,103 @@ mtlk_core_cfg_send_max_mpdu_length (mtlk_core_t *core, const uint32 max_mpdu_len
     return res;
 }
 
+static void
+_wave_core_store_ap_retry_limit (mtlk_core_t *core, const uint8 retry_limit)
+{
+    MTLK_ASSERT(core != NULL);
+    WAVE_RADIO_PDB_SET_INT(wave_vap_radio_get(core->vap_handle), PARAM_DB_RADIO_AP_RETRY_LIMIT, retry_limit);
+}
+
+mtlk_error_t __MTLK_IFUNC
+wave_core_cfg_receive_retry_limit (mtlk_core_t *core, uint8 *retry_limit)
+{
+    mtlk_txmm_msg_t         man_msg;
+    mtlk_txmm_data_t        *man_entry;
+    UMI_SET_RETRY_LIMIT     *mac_msg;
+    mtlk_error_t            res;
+    unsigned                oid;
+
+    MTLK_ASSERT(core != NULL);
+    MTLK_ASSERT(retry_limit != NULL);
+
+    oid = mtlk_vap_get_oid(core->vap_handle);
+    man_entry = mtlk_txmm_msg_init_with_empty_data(&man_msg, mtlk_vap_get_txmm(core->vap_handle), NULL);
+    if (!man_entry) {
+      ELOG_D("CID-%04x: Can not get TXMM slot", oid);
+      return MTLK_ERR_NO_RESOURCES;
+    }
+
+    man_entry->id = UM_MAN_SET_RETRY_LIMIT_REQ;
+    man_entry->payload_size = sizeof(UMI_SET_RETRY_LIMIT);
+    mac_msg = (UMI_SET_RETRY_LIMIT *)man_entry->payload;
+    mac_msg->getSetOperation = API_GET_OPERATION;
+
+    res = mtlk_txmm_msg_send_blocked(&man_msg, MTLK_MM_BLOCKED_SEND_TIMEOUT);
+
+    if (MTLK_ERR_OK == res && UMI_OK == mac_msg->Status) {
+      *retry_limit = mac_msg->txRetryLimit;
+    }
+    else {
+      ELOG_DDD("CID-%04x: Receiving UM_MAN_SET_RETRY_LIMIT_REQ failed, res=%d status=%hhu",
+              oid, res, mac_msg->Status);
+      if (UMI_OK != mac_msg->Status)
+        res = MTLK_ERR_MAC;
+    }
+
+    mtlk_txmm_msg_cleanup(&man_msg);
+    return res;
+}
+
+mtlk_error_t __MTLK_IFUNC
+wave_core_cfg_send_retry_limit (mtlk_core_t *core, const uint8 retry_limit)
+{
+
+    mtlk_txmm_msg_t         man_msg;
+    mtlk_txmm_data_t        *man_entry;
+    UMI_SET_RETRY_LIMIT     *mac_msg;
+    mtlk_error_t            res;
+    unsigned                oid;
+
+    MTLK_ASSERT(core != NULL);
+    oid = mtlk_vap_get_oid(core->vap_handle);
+
+    if (retry_limit > MTLK_TX_RETRY_LIMIT_MAX) {
+      ELOG_DD("CID-%04x: Invalid retry limit %hhu", oid, retry_limit);
+      return MTLK_ERR_VALUE;
+    }
+
+    ILOG1_DD("CID-%04x: Set Tx Retry Limit to %hhu", oid, retry_limit);
+
+    /* allocate a new message */
+    man_entry = mtlk_txmm_msg_init_with_empty_data(&man_msg, mtlk_vap_get_txmm(core->vap_handle), NULL);
+    if (!man_entry)
+    {
+      ELOG_D("CID-%04x: Can not get TXMM slot", oid);
+      return MTLK_ERR_NO_RESOURCES;
+    }
+
+    /* fill the message data */
+    man_entry->id = UM_MAN_SET_RETRY_LIMIT_REQ;
+    man_entry->payload_size = sizeof(UMI_SET_RETRY_LIMIT);
+    mac_msg = (UMI_SET_RETRY_LIMIT *)man_entry->payload;
+    memset(mac_msg, 0, sizeof(*mac_msg));
+    mac_msg->txRetryLimit = retry_limit;
+
+    /* send the message to FW */
+    res = mtlk_txmm_msg_send_blocked(&man_msg, MTLK_MM_BLOCKED_SEND_TIMEOUT);
+
+    if (MTLK_ERR_OK != res || UMI_OK != mac_msg->Status) {
+      ELOG_DDD("CID-%04x: Set UM_MAN_SET_RETRY_LIMIT_REQ failed, res=%d status=%hhu",
+               oid, res, mac_msg->Status);
+      if (UMI_OK != mac_msg->Status)
+        res = MTLK_ERR_MAC;
+    }
+
+    /* cleanup the message */
+    mtlk_txmm_msg_cleanup(&man_msg);
+
+    return res;
+}
 
 int __MTLK_IFUNC
 mtlk_core_cfg_set_max_mpdu_length (mtlk_handle_t hcore, const void *data, uint32 data_size)
@@ -4094,6 +4362,54 @@ mtlk_core_cfg_get_max_mpdu_length (mtlk_handle_t hcore, const void *data, uint32
     }
 
     return res;
+}
+
+mtlk_error_t __MTLK_IFUNC
+wave_core_cfg_set_ap_retry_limit (mtlk_handle_t hcore, const void *data, uint32 data_size)
+{
+    mtlk_error_t res = MTLK_ERR_OK;
+    mtlk_core_t *core = (mtlk_core_t *) hcore;
+    mtlk_clpb_t *clpb = *(mtlk_clpb_t **) data;
+    wave_ui_uchar_param_t *retry_limit_cfg = NULL;
+    uint32 retry_limit_cfg_size;
+
+    MTLK_ASSERT(core != NULL);
+    MTLK_ASSERT(sizeof(mtlk_clpb_t*) == data_size);
+
+    /* get configuration */
+    retry_limit_cfg = mtlk_clpb_enum_get_next(clpb, &retry_limit_cfg_size);
+    MTLK_CLPB_TRY(retry_limit_cfg, retry_limit_cfg_size)
+      MTLK_CFG_START_CHEK_ITEM_AND_CALL()
+        /* send new config to FW */
+        MTLK_CFG_CHECK_ITEM_AND_CALL(retry_limit_cfg, param, wave_core_cfg_send_retry_limit,
+                                     (core, retry_limit_cfg->param), res);
+        /* store new config in internal db*/
+        MTLK_CFG_CHECK_ITEM_AND_CALL_VOID(retry_limit_cfg, param, _wave_core_store_ap_retry_limit,
+                                          (core, retry_limit_cfg->param));
+      MTLK_CFG_END_CHEK_ITEM_AND_CALL()
+    MTLK_CLPB_FINALLY(res)
+      /* push result into clipboard */
+      return mtlk_clpb_push_res(clpb, res);
+    MTLK_CLPB_END
+}
+
+mtlk_error_t __MTLK_IFUNC
+wave_core_cfg_get_ap_retry_limit (mtlk_handle_t hcore, const void *data, uint32 data_size)
+{
+    mtlk_error_t res = MTLK_ERR_OK;
+    wave_ui_uchar_param_t retry_limit_cfg;
+    mtlk_core_t *core = (mtlk_core_t*)hcore;
+    mtlk_clpb_t *clpb = *(mtlk_clpb_t **) data;
+
+    MTLK_ASSERT(core != NULL);
+    MTLK_ASSERT(sizeof(mtlk_clpb_t*) == data_size);
+
+    /* Get the config from FW */
+    MTLK_CFG_SET_ITEM_BY_FUNC(&retry_limit_cfg, param, wave_core_cfg_receive_retry_limit,
+                              (core, &retry_limit_cfg.param), res);
+
+  /* push result and config to clipboard */
+  return mtlk_clpb_push_res_data(clpb, res, &retry_limit_cfg, sizeof(retry_limit_cfg));
 }
 
 /* Frequency Jump Mode Configuration */
@@ -4951,6 +5267,141 @@ mtlk_core_receive_mu_operation (mtlk_core_t *core, BOOL *mu_operation)
 }
 
 int __MTLK_IFUNC
+wave_core_set_rts_threshold (mtlk_handle_t hcore, const void* data, uint32 data_size)
+{
+
+  int                    res = MTLK_ERR_OK;
+  mtlk_core_t            *core = (mtlk_core_t*)hcore;
+  mtlk_wlan_rts_threshold_cfg_t   *rts_threshold = NULL;
+  uint32                 rts_threshold_size;
+  mtlk_clpb_t            *clpb = *(mtlk_clpb_t **)data;
+  ILOG1_D("wave_core_set_rts_threshold = %i", data_size);
+
+  MTLK_ASSERT(sizeof(mtlk_clpb_t*) == data_size);
+  /* get configuration */
+  rts_threshold = mtlk_clpb_enum_get_next(clpb, &rts_threshold_size);
+  MTLK_CLPB_TRY(rts_threshold, rts_threshold_size)
+    MTLK_CFG_START_CHEK_ITEM_AND_CALL()
+      /* send new config to FW */
+      MTLK_CFG_CHECK_ITEM_AND_CALL(rts_threshold, threshold, _wave_core_cfg_set_rts_threshold,
+               (core, rts_threshold->threshold), res);
+    MTLK_CFG_END_CHEK_ITEM_AND_CALL()
+  MTLK_CLPB_FINALLY(res)
+    /* push result into clipboard */
+    return mtlk_clpb_push_res(clpb, res);
+  MTLK_CLPB_END
+
+}
+
+int __MTLK_IFUNC
+_wave_core_cfg_set_rts_threshold (mtlk_core_t *core, uint32 rts_threshold)
+{
+  mtlk_txmm_msg_t        man_msg;
+  mtlk_txmm_data_t       *man_entry = NULL;
+  UMI_SET_RTS_THRESHOLD  *rts_threshold_config = NULL;
+  mtlk_vap_handle_t      vap_handle = core->vap_handle;
+  int                    res;
+  wave_radio_t           *radio = wave_vap_radio_get(vap_handle);
+
+  man_entry = mtlk_txmm_msg_init_with_empty_data(&man_msg, mtlk_vap_get_txmm(vap_handle), NULL);
+  if (NULL == man_entry) {
+    ELOG_D("CID-%04x: No man entry available", mtlk_vap_get_oid(vap_handle));
+    return MTLK_ERR_NO_RESOURCES;
+  }
+
+  man_entry->id = UM_MAN_SET_RTS_THRESHOLD_REQ;
+  man_entry->payload_size = sizeof(UMI_SET_RTS_THRESHOLD);
+
+  rts_threshold_config = (UMI_SET_RTS_THRESHOLD *)(man_entry->payload);
+  rts_threshold_config->newRtsThreshold = rts_threshold;
+  rts_threshold_config->vapId = 0;
+  rts_threshold_config->isDisabled = (rts_threshold == 0xFFFFFFFF) ? 1: 0;
+  rts_threshold_config->getSetOperation = API_SET_OPERATION;
+
+  res = mtlk_txmm_msg_send_blocked(&man_msg, MTLK_MM_BLOCKED_SEND_TIMEOUT);
+
+  if (MTLK_ERR_OK != res || UMI_OK != rts_threshold_config->Status) {
+    ELOG_DDD("CID-%04x: Set rts_threshold_config failed, res=%d status=%hhu",
+          mtlk_vap_get_oid(vap_handle), res, rts_threshold_config->Status);
+    if (UMI_OK != rts_threshold_config->Status)
+      res = MTLK_ERR_MAC;
+  }
+  else {
+    WAVE_RADIO_PDB_SET_INT(radio, PARAM_DB_RADIO_RTS_THRESH, rts_threshold);
+  }
+
+  mtlk_txmm_msg_cleanup(&man_msg);
+  return res;
+}
+
+int __MTLK_IFUNC
+wave_core_cfg_recover_rts_threshold (mtlk_core_t *core)
+{
+  wave_radio_t *radio = wave_vap_radio_get(core->vap_handle);
+  uint32 rts_threshold  = WAVE_RADIO_PDB_GET_INT(radio, PARAM_DB_RADIO_RTS_THRESH);
+
+  if (MTLK_PARAM_DB_VALUE_IS_INVALID(rts_threshold))
+    return MTLK_ERR_OK;
+
+  return _wave_core_cfg_set_rts_threshold(core, rts_threshold);
+}
+
+int __MTLK_IFUNC
+wave_core_get_rts_threshold (mtlk_handle_t hcore, const void* data, uint32 data_size)
+{
+  int res = MTLK_ERR_OK;
+  mtlk_wlan_rts_threshold_cfg_t rts_threshold;
+  mtlk_core_t *core = (mtlk_core_t*)hcore;
+  mtlk_clpb_t *clpb = *(mtlk_clpb_t **)data;
+
+  MTLK_ASSERT(sizeof(mtlk_clpb_t*) == data_size);
+
+  /* read config from internal db */
+  MTLK_CFG_SET_ITEM_BY_FUNC(&rts_threshold, threshold, _wave_core_cfg_get_rts_threshold,
+    (core, &rts_threshold.threshold),res);
+
+  /* push result and config to clipboard */
+  return mtlk_clpb_push_res_data(clpb, res, &rts_threshold, sizeof(rts_threshold));
+}
+
+int __MTLK_IFUNC
+_wave_core_cfg_get_rts_threshold (mtlk_core_t *core, uint32 *rts_threshold)
+{
+  mtlk_txmm_msg_t 	   man_msg;
+  mtlk_txmm_data_t	   *man_entry = NULL;
+  UMI_SET_RTS_THRESHOLD  *rts_threshold_config = NULL;
+  mtlk_vap_handle_t	   vap_handle = core->vap_handle;
+  int res;
+
+  man_entry = mtlk_txmm_msg_init_with_empty_data(&man_msg, mtlk_vap_get_txmm(vap_handle), NULL);
+  if (NULL == man_entry) {
+    ELOG_D("CID-%04x: No man entry available", mtlk_vap_get_oid(vap_handle));
+    return MTLK_ERR_NO_RESOURCES;
+  }
+
+  man_entry->id = UM_MAN_SET_RTS_THRESHOLD_REQ;
+  man_entry->payload_size = sizeof(UMI_SET_RTS_THRESHOLD);
+
+  rts_threshold_config = (UMI_SET_RTS_THRESHOLD *)(man_entry->payload);
+  rts_threshold_config->getSetOperation = API_GET_OPERATION;
+
+  res = mtlk_txmm_msg_send_blocked(&man_msg, MTLK_MM_BLOCKED_SEND_TIMEOUT);
+
+  if (MTLK_ERR_OK == res && UMI_OK == rts_threshold_config->Status) {
+    *rts_threshold = rts_threshold_config->newRtsThreshold;
+  }
+  else {
+    ELOG_DDD("CID-%04x: Receive UM_MAN_SET_RTS_THRESHOLD_REQ failed, res=%d status=%hhu",
+    mtlk_vap_get_oid(vap_handle), res, rts_threshold_config->Status);
+    if (UMI_OK != rts_threshold_config->Status)
+      res = MTLK_ERR_MAC;
+  }
+
+  mtlk_txmm_msg_cleanup(&man_msg);
+  return res;
+}
+
+int __MTLK_IFUNC
 mtlk_core_set_rts_mode (mtlk_core_t *core, uint8 dynamic_bw, uint8 static_bw)
 {
   mtlk_txmm_msg_t      man_msg;
@@ -5693,73 +6144,54 @@ mtlk_core_cfg_set_fast_drop (mtlk_core_t *core, uint8 fast_drop)
   return res;
 }
 
-static int
-_mtlk_core_store_erp_cfg (mtlk_core_t *core, mtlk_erp_cfg_t *erp_cfg)
+int __MTLK_IFUNC
+mtlk_core_coc_set_erp_mode (mtlk_handle_t hcore, const void* data, uint32 data_size)
 {
-  int res;
-  mtlk_pdb_size_t erp_size = sizeof(mtlk_erp_cfg_t);
+  uint32 res = MTLK_ERR_OK;
+  mtlk_core_t *core = (mtlk_core_t*)hcore;
+  mtlk_erp_mode_cfg_t *erp_cfg = NULL;
+  uint32 erp_cfg_size;
+  mtlk_clpb_t *clpb = *(mtlk_clpb_t **) data;
+  mtlk_erp_t *erp_mgmt = __wave_core_erp_mgmt_get(core);
 
-  res = WAVE_RADIO_PDB_SET_BINARY(wave_vap_radio_get(core->vap_handle), PARAM_DB_RADIO_ERP_CFG, erp_cfg, erp_size);
-  if (MTLK_ERR_OK != res)
-    ELOG_D("CID-%04x: Failed to store ERP configuration", mtlk_vap_get_oid(core->vap_handle));
+  MTLK_ASSERT(sizeof(mtlk_clpb_t*) == data_size);
 
-  return res;
+  erp_cfg = mtlk_clpb_enum_get_next(clpb, &erp_cfg_size);
+  MTLK_CLPB_TRY(erp_cfg, erp_cfg_size)
+    MTLK_CFG_START_CHEK_ITEM_AND_CALL()
+      MTLK_CFG_CHECK_ITEM_AND_CALL(erp_cfg, erp_cfg, mtlk_coc_set_erp_mode,
+                                   (erp_mgmt, &erp_cfg->erp_cfg), res);
+    MTLK_CFG_END_CHEK_ITEM_AND_CALL()
+  MTLK_CLPB_FINALLY(res)
+    return mtlk_clpb_push_res(clpb, res);
+  MTLK_CLPB_END
 }
 
 int __MTLK_IFUNC
-mtlk_core_send_erp_cfg (mtlk_core_t *core, mtlk_erp_cfg_t *erp_cfg)
+mtlk_core_coc_get_erp_mode (mtlk_handle_t hcore, const void* data, uint32 data_size)
 {
-  int                res;
-  mtlk_txmm_msg_t    man_msg;
-  mtlk_txmm_data_t  *man_entry = NULL;
-  UMI_ERPSet_t      *erp = NULL;
-  mtlk_vap_handle_t  vap_handle = core->vap_handle;
-  uint16             oid;
-  int                net_state = mtlk_core_get_net_state(core);
+  uint32 res = MTLK_ERR_OK;
+  mtlk_erp_mode_cfg_t erp_cfg;
+  mtlk_core_t *core = (mtlk_core_t*)hcore;
+  wave_radio_t *radio;
+  mtlk_clpb_t *clpb = *(mtlk_clpb_t **) data;
+  mtlk_erp_t *erp_mgmt = __wave_core_erp_mgmt_get(core);
 
-  oid = mtlk_vap_get_oid(vap_handle);
-  /* Allow only if the VAP has already been activated */
-  if (!(net_state & (NET_STATE_ACTIVATING | NET_STATE_DEACTIVATING | NET_STATE_CONNECTED))) {
-    ELOG_D("CID-%04x: VAP not activated yet", oid);
-    return MTLK_ERR_NOT_READY;
+  MTLK_ASSERT(sizeof(mtlk_clpb_t*) == data_size);
+  MTLK_ASSERT(!mtlk_vap_is_slave_ap(core->vap_handle));
+
+  radio = wave_vap_radio_get(core->vap_handle);
+  MTLK_ASSERT(radio);
+
+  memset(&erp_cfg, 0, sizeof(erp_cfg));
+
+  MTLK_CFG_SET_ITEM_BY_FUNC(&erp_cfg, erp_cfg,
+    mtlk_coc_get_erp_mode, (erp_mgmt, &erp_cfg.erp_cfg), res);
+
+  res = mtlk_clpb_push(clpb, &res, sizeof(res));
+  if (MTLK_ERR_OK == res) {
+    res = mtlk_clpb_push(clpb, &erp_cfg, sizeof(erp_cfg));
   }
-
-  /* Store config, will be sent after scan */
-  if (mtlk_core_is_in_scan_mode(core))
-    return _mtlk_core_store_erp_cfg(core, erp_cfg);
-
-  res = mtlk_core_radio_enable_if_needed(core);
-  if (MTLK_ERR_OK != res)
-    return res;
-
-  ILOG2_D("CID-%04x: Sending UM_MAN_ERP_SET_REQ", oid);
-
-  man_entry = mtlk_txmm_msg_init_with_empty_data(&man_msg, mtlk_vap_get_txmm(vap_handle), NULL);
-
-  if (NULL == man_entry) {
-    ELOG_D("CID-%04x: No man entry available", oid);
-    return MTLK_ERR_NO_RESOURCES;
-  }
-
-  man_entry->id = UM_MAN_ERP_SET_REQ;
-  man_entry->payload_size = sizeof(UMI_ERPSet_t);
-
-  erp                          = (UMI_ERPSet_t *)(man_entry->payload);
-  erp->initalWaitTimeInSeconds = HOST_TO_MAC32(erp_cfg->initial_wait_time);
-  erp->radioOffTimeInMsecs     = HOST_TO_MAC32(erp_cfg->radio_off_time);
-  erp->radioOnTimerInMsecs     = HOST_TO_MAC32(erp_cfg->radio_on_time);
-  erp->isErpEnable             = HOST_TO_MAC32(erp_cfg->erp_enabled);
-
-  res = mtlk_txmm_msg_send_blocked(&man_msg, MTLK_MM_BLOCKED_SEND_TIMEOUT);
-
-  if (MTLK_ERR_OK != res || UMI_OK != erp->Status) {
-    ELOG_DDD("CID-%04x: Sending UM_MAN_ERP_SET_REQ failed, res=%d status=%hhu", oid, res, erp->Status);
-    if (UMI_OK != erp->Status)
-      res = MTLK_ERR_MAC;
-  }
-
-  mtlk_txmm_msg_cleanup(&man_msg);
-  res = mtlk_core_radio_disable_if_needed(core);
 
   return res;
 }
@@ -7231,6 +7663,118 @@ int wave_core_he_operation_set(
   res =  wave_pdb_set_binary(param_db_core, PARAM_DB_CORE_HE_OPERATION, &he_operation, he_operation_len);
   if(res != MTLK_ERR_OK)
     ELOG_V("Failed to set the BSS color flag");
+
+  return res;
+}
+
+mtlk_error_t __MTLK_IFUNC
+wave_core_cfg_notify_cac_started (mtlk_handle_t hcore, const void *data, uint32 data_size)
+{
+  mtlk_core_t  *core = HANDLE_T_PTR(mtlk_core_t, hcore);
+  mtlk_erp_t   *erp_obj;
+
+  MTLK_ASSERT(sizeof(mtlk_clpb_t*) == data_size);
+  MTLK_ASSERT(core);
+
+  erp_obj = __wave_core_erp_mgmt_get(core);
+  MTLK_ASSERT(erp_obj);
+
+  (void)mtlk_core_set_coc_pause_power_mode(core);
+  (void)mtlk_coc_erp_deactivate(erp_obj);
+  wave_radio_set_cac_pending(wave_vap_radio_get(core->vap_handle), TRUE);
+
+  return MTLK_ERR_OK;
+}
+
+mtlk_error_t __MTLK_IFUNC
+wave_core_cfg_notify_cac_finished (mtlk_handle_t hcore, const void *data, uint32 data_size)
+{
+  mtlk_core_t  *core = HANDLE_T_PTR(mtlk_core_t, hcore);
+  mtlk_erp_t   *erp_obj;
+
+  MTLK_ASSERT(sizeof(mtlk_clpb_t*) == data_size);
+  MTLK_ASSERT(core);
+
+  erp_obj = __wave_core_erp_mgmt_get(core);
+  MTLK_ASSERT(erp_obj);
+
+  (void)mtlk_core_set_coc_actual_power_mode(core);
+  (void)mtlk_coc_erp_activate(erp_obj); /* activate if needed */
+  wave_radio_set_cac_pending(wave_vap_radio_get(core->vap_handle), FALSE);
+
+  return MTLK_ERR_OK;
+}
+
+int wave_core_set_he_debug_data(
+  struct wireless_dev *wdev,
+  const void *data,
+  int data_len)
+{
+  int res;
+  mtlk_core_t *core;
+  mtlk_df_user_t *df_user;
+  mtlk_pdb_t *param_db_core;
+  struct mtlk_he_debug_mode_data adv_he_capab;
+  u8 *he_cap = (u8*)data;
+  mtlk_pdb_size_t pdb_len = sizeof(struct mtlk_he_debug_mode_data);
+
+  df_user = mtlk_df_user_from_wdev(wdev);
+  MTLK_CHECK_DF_USER(df_user);
+
+  ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
+  core = mtlk_vap_get_core(mtlk_df_get_vap_handle(mtlk_df_user_get_df(df_user)));
+  MTLK_ASSERT(NULL != core);
+  if (data_len > pdb_len)
+    return -EINVAL;
+
+  memset(&adv_he_capab, 0, sizeof(struct mtlk_he_debug_mode_data));
+  wave_memcpy(&adv_he_capab, sizeof(struct mtlk_he_debug_mode_data), he_cap, data_len);
+  param_db_core = mtlk_vap_get_param_db(core->vap_handle);
+  res = wave_pdb_set_binary(param_db_core, PARAM_DB_CORE_HE_DEBUG_DATA, &adv_he_capab, pdb_len);
+  if (res != MTLK_ERR_OK)
+    ELOG_V("Failed to set the Advertised HE capab");
+
+  return res;
+}
+
+int wave_core_he_non_advertised_set(
+  struct wireless_dev *wdev,
+  const void *data,
+  int data_len)
+{
+  int res;
+  mtlk_core_t *core;
+  mtlk_df_user_t *df_user;
+  mtlk_pdb_t *param_db_core;
+  u8 he_non_advertised[HE_NON_ADVERTISED_LEN];
+  u8 cap_index;
+  u8 cap_value;
+  u8 cap_offset;
+  u8 *he_non_adv_info = (u8*)data;
+  mtlk_pdb_size_t pdb_len = sizeof(he_non_advertised);
+
+  df_user = mtlk_df_user_from_wdev(wdev);
+  MTLK_CHECK_DF_USER(df_user);
+
+  ILOG1_SSD("%s: Invoked from %s (%i)", wdev->netdev->name, current->comm, current->pid);
+  core = mtlk_vap_get_core(mtlk_df_get_vap_handle(mtlk_df_user_get_df(df_user)));
+  MTLK_ASSERT(NULL != core);
+
+  param_db_core = mtlk_vap_get_param_db(core->vap_handle);
+  if (!(he_non_adv_info && (data_len == (3 * sizeof(u8)))))
+    return -EINVAL;
+
+  cap_index = he_non_adv_info[0];
+  cap_value = he_non_adv_info[1];
+  cap_offset = he_non_adv_info[2];
+  if (cap_index > HE_NON_ADVERTISED_LEN)
+    return -EINVAL;
+
+  wave_pdb_get_binary(param_db_core, PARAM_DB_CORE_HE_NON_ADVERTISED, &he_non_advertised, &pdb_len);
+  clr_set_he_cap(&he_non_advertised[cap_index], cap_value, cap_offset);
+  res = wave_pdb_set_binary(param_db_core, PARAM_DB_CORE_HE_NON_ADVERTISED, &he_non_advertised, pdb_len);
+  if (res != MTLK_ERR_OK)
+    ELOG_DD("Faied to set the Non Advertised HE cap index: %d offset: %d", cap_index, cap_offset);
 
   return res;
 }
