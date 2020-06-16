@@ -5953,6 +5953,20 @@ _mtlk_hw_mhi_update_hw_stats (mtlk_hw_t *hw, hw_statistics_t *hw_stats)
     mtlk_osal_lock_release(&hw_stats->lock);
 }
 
+uint8 __MTLK_IFUNC
+mtlk_hw_get_number_of_active_vaps (mtlk_hw_t *hw)
+{
+  int i;
+  uint8  active_vaps = 0;
+  wave_radio_t *radio;
+
+  for (i = 0; i < hw->radio_descr->num_radios; i++) {
+    radio = wave_radio_descr_wave_radio_get(hw->radio_descr, i);
+       active_vaps += mtlk_vap_manager_get_active_vaps_number(wave_radio_vap_manager_get(radio));
+  }
+  return active_vaps;
+}
+
 void __MTLK_IFUNC
 mtlk_hw_mhi_get_tx_power (mtlk_hw_t *hw, mtlk_hw_tx_power_t *tx_power, unsigned radio_idx)
 {

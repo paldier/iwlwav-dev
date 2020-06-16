@@ -2782,6 +2782,7 @@ mtlk_wait_all_packets_confirmed(mtlk_core_t *nic)
   int wait_cnt = (SQ_WAIT_ALL_PACKETS_CFM_TIMEOUT_TOTAL / SQ_WAIT_ALL_PACKETS_CFM_TIMEOUT_ONCE);
   int res = MTLK_ERR_OK;
   uint32    dat_uncfm, bss_sent, bss_cfm, bss_uncfm, bss_res_queue;
+  mtlk_hw_t *hw = mtlk_vap_get_hw(nic->vap_handle);
 
   for (;;) {
     dat_uncfm = mtlk_osal_atomic_get(&nic->unconfirmed_data);
@@ -2818,7 +2819,7 @@ mtlk_wait_all_packets_confirmed(mtlk_core_t *nic)
   if (bss_res_queue)
     _mtlk_core_reset_cnt(nic, MTLK_CORE_CNT_MAN_FRAMES_RES_QUEUE);
 
-  if (1 == mtlk_vap_manager_get_active_vaps_number(mtlk_vap_get_manager(nic->vap_handle))) {
+  if (1 == mtlk_hw_get_number_of_active_vaps(hw)) {
     uint32 tx_res_used_bds = 0;
     (void)mtlk_hw_get_prop(mtlk_vap_get_hwapi(nic->vap_handle), MTLK_HW_BSS_MGMT_MSGS_RES_USED_PEAK, &tx_res_used_bds, sizeof(tx_res_used_bds));
 

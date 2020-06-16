@@ -630,4 +630,7 @@ uint16 __MTLK_IFUNC wave_hw_get_all_sta_sid(mtlk_hw_t* hw);
 void __MTLK_IFUNC
 mtlk_hw_get_rx_packets_and_bytes(mtlk_hw_t *hw, uint16 sta_sid, struct intel_vendor_unconnected_sta *sta_res_data);
 
+uint8 __MTLK_IFUNC
+mtlk_hw_get_number_of_active_vaps(mtlk_hw_t *hw);
+
 #endif /* __HW_MMB_H__ */
