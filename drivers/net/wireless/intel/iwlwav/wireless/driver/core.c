@@ -2199,6 +2199,8 @@ int mtlk_mbss_send_vap_activate(struct nic *nic, mtlk_hw_band_e band)
   ILOG1_D("CID-%04x: Start activation", mtlk_vap_get_oid(nic->vap_handle));
 
   mtlk_vap_set_ready(nic->vap_handle);
+  if(MTLK_VAP_INVALID_IDX != vap_id)
+    mtlk_mmb_clean_tx_bss_res_queue_for_vap(mtlk_vap_get_hw(nic->vap_handle), wave_vap_radio_id_get(nic->vap_handle), vap_id);
 
   man_entry = mtlk_txmm_msg_init_with_empty_data(&activate_msg, txmm, &result);
   if (man_entry == NULL)
@@ -2813,15 +2815,18 @@ mtlk_wait_all_packets_confirmed(mtlk_core_t *nic)
 
   bss_res_queue = _mtlk_core_get_cnt(nic, MTLK_CORE_CNT_MAN_FRAMES_RES_QUEUE);  /* reserved queue */
 
-  if (bss_res_queue) {
-    mtlk_hw_t *hw = mtlk_vap_get_hw(nic->vap_handle);
-    uint8 radio_id = wave_vap_radio_id_get(nic->vap_handle);
-    uint8 vap_id = mtlk_vap_get_id(nic->vap_handle);
-
-    mtlk_mmb_clean_tx_bss_res_queue_for_vap(hw, radio_id, vap_id);
+  if (bss_res_queue)
     _mtlk_core_reset_cnt(nic, MTLK_CORE_CNT_MAN_FRAMES_RES_QUEUE);
-    WLOG_DD("CID-%04x: cleaned %d HDs in bss_res_queue",
-           mtlk_vap_get_oid(nic->vap_handle), bss_res_queue);
+
+  if (1 == mtlk_vap_manager_get_active_vaps_number(mtlk_vap_get_manager(nic->vap_handle))) {
+    uint32 tx_res_used_bds = 0;
+    (void)mtlk_hw_get_prop(mtlk_vap_get_hwapi(nic->vap_handle), MTLK_HW_BSS_MGMT_MSGS_RES_USED_PEAK, &tx_res_used_bds, sizeof(tx_res_used_bds));
+
+    if (tx_res_used_bds > 0){
+      mtlk_mmb_clean_tx_bss_res_queue_for_vap(mtlk_vap_get_hw(nic->vap_handle), wave_vap_radio_id_get(nic->vap_handle), MTLK_VAP_INVALID_IDX);
+      WLOG_DD("CID-%04x: cleaned %d HDs in bss_res_queue",
+           mtlk_vap_get_oid(nic->vap_handle), tx_res_used_bds);
+    }
   }
 
   return res;
