@@ -2530,7 +2530,8 @@ static void ieee80211_mgd_probe_ap_send(struct ieee80211_sub_if_data *sdata)
 		mutex_unlock(&sdata->local->sta_mtx);
 	}
 
-	if (ieee80211_hw_check(&sdata->local->hw, REPORTS_TX_ACK_STATUS)) {
+	if (ieee80211_hw_check(&sdata->local->hw, REPORTS_TX_ACK_STATUS) &&
+	    ifmgd->flags & IEEE80211_STA_DISABLE_HE) {
 		ifmgd->nullfunc_failed = false;
 		ieee80211_send_nullfunc(sdata->local, sdata, false);
 	} else {
@@ -4436,7 +4437,8 @@ void ieee80211_sta_work(struct ieee80211_sub_if_data *sdata)
 			}
 		} else if (time_is_after_jiffies(ifmgd->probe_timeout))
 			run_again(sdata, ifmgd->probe_timeout);
-		else if (ieee80211_hw_check(&local->hw, REPORTS_TX_ACK_STATUS)) {
+		else if (ieee80211_hw_check(&local->hw, REPORTS_TX_ACK_STATUS) &&
+			 ifmgd->flags & IEEE80211_STA_DISABLE_HE) {
 			mlme_dbg(sdata,
 				 "Failed to send nullfunc to AP %pM after %dms, disconnecting\n",
 				 bssid, probe_wait_ms);
