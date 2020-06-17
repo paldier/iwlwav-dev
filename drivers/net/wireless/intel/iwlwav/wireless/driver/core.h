@@ -632,6 +632,10 @@ struct nic {
   mtlk_osal_event_t         ndp_acked;
   BOOL                      waiting_for_ndp_ack;
 
+  /* occurs when EAPOL frame sent from STA VAP to far AP has been acknowledged */
+  mtlk_osal_event_t         eapol_acked;
+  BOOL                      waiting_for_eapol_ack;
+
   /* statistics auto polling period */
   uint32                    stats_poll_period;
 

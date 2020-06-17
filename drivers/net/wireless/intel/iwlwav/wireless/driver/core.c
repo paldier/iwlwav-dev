@@ -2752,6 +2752,9 @@ mtlk_core_on_bss_cfm (mtlk_core_t *nic, IEEE_ADDR *peer, uint32 extra_processing
             mtlk_vap_get_oid(nic->vap_handle), extra_processing, subtype, peer->au8Addr, (int)is_broadcast);
   if (extra_processing == PROCESS_NULL_DATA_PACKET && nic->waiting_for_ndp_ack)
     mtlk_osal_event_set(&nic->ndp_acked);
+  else if (extra_processing == PROCESS_EAPOL && nic->waiting_for_eapol_ack)
+    mtlk_osal_event_set(&nic->eapol_acked);
+
   if (subtype == MAN_TYPE_PROBE_RES) {
     if (is_broadcast) {
         _mtlk_core_del_bcast_probe_resp_entry(nic, peer);
@@ -3498,6 +3501,13 @@ _mtlk_core_mgmt_tx (mtlk_handle_t hcore, const void* data, uint32 data_size)
         mtlk_sta_on_packet_dropped(sta,  MTLK_TX_DISCARDED_DROP_ALL_FILTER);
         MTLK_CLPB_EXIT(MTLK_ERR_NOT_HANDLED);
       }
+      if (mtlk_vap_is_sta(core->vap_handle)) {
+        /* since we are sending the last eapol (4of4) frame in station mode, we must wait for eapol ack,
+         * to not cause a race condition with FW sending the Frame over air, and the driver sending SET_KEY commands
+         * which will cause the frame to be encrypted and lead to 4way handshake timeout (-15) */
+        mtlk_osal_event_reset(&core->eapol_acked);
+        core->waiting_for_eapol_ack = TRUE;
+      }
     } else if (PROCESS_NULL_DATA_PACKET == mtp->extra_processing) {
       uint16 sid = mtlk_core_get_sid_by_addr(core, (char *)dst_addr);
       if (DB_UNKNOWN_SID == sid) {
@@ -3539,12 +3549,21 @@ _mtlk_core_mgmt_tx (mtlk_handle_t hcore, const void* data, uint32 data_size)
                (mtp->extra_processing == PROCESS_MANAGEMENT) ? "management" : (mtp->extra_processing == PROCESS_EAPOL) ? "EAPOL" : (mtp->extra_processing == PROCESS_NULL_DATA_PACKET) ? "null data" : "unknown",
                mtp->extra_processing, res, mtlk_get_error_text(res));
       if (sta)
-        if (PROCESS_EAPOL == mtp->extra_processing)
+        if (PROCESS_EAPOL == mtp->extra_processing) {
           mtlk_sta_on_tx_packet_discarded_802_1x(sta);  /* Count 802_1x discarded TX packets */
+          core->waiting_for_eapol_ack = FALSE;
+        }
     } else {
       if (sta)
-        if (PROCESS_EAPOL == mtp->extra_processing)
+        if (PROCESS_EAPOL == mtp->extra_processing) {
           mtlk_sta_on_tx_packet_802_1x(sta);            /* Count 802_1x TX packets */
+          if (core->waiting_for_eapol_ack) {
+            int wait_res = mtlk_osal_event_wait(&core->eapol_acked, 50);
+            if (wait_res != MTLK_ERR_OK)
+              WLOG_D("wait for eapol ack failed (wait_res=%d)", wait_res);
+            core->waiting_for_eapol_ack = FALSE;
+          }
+        }
     }
   }
   MTLK_CLPB_FINALLY(res) {
@@ -10103,6 +10122,7 @@ MTLK_INIT_STEPS_LIST_BEGIN(core)
   MTLK_INIT_STEPS_LIST_ENTRY(core, NDP_WDS_WPA_STA_LIST_INIT)
   MTLK_INIT_STEPS_LIST_ENTRY(core, NDP_WDS_WPA_STA_LIST_LOCK_INIT)
   MTLK_INIT_STEPS_LIST_ENTRY(core, NDP_ACKED)
+  MTLK_INIT_STEPS_LIST_ENTRY(core, EAPOL_ACKED)
 MTLK_INIT_INNER_STEPS_BEGIN(core)
 MTLK_INIT_STEPS_LIST_END(core);
 
@@ -10122,12 +10142,16 @@ _mtlk_core_cleanup(struct nic* nic)
   _mtlk_core_flush_ucast_probe_resp_list(nic);
   mtlk_core_cfg_flush_wds_wpa_list(nic);
   mtlk_osal_event_terminate(&nic->ndp_acked);
+  mtlk_osal_event_terminate(&nic->eapol_acked);
 
   if (BR_MODE_WDS == MTLK_CORE_PDB_GET_INT(nic, PARAM_DB_CORE_BRIDGE_MODE)) {
     mtlk_vap_manager_dec_wds_bridgemode(mtlk_vap_get_manager(nic->vap_handle));
   }
 
   MTLK_CLEANUP_BEGIN(core, MTLK_OBJ_PTR(nic))
+
+    MTLK_CLEANUP_STEP(core, EAPOL_ACKED, MTLK_OBJ_PTR(nic),
+      mtlk_osal_event_cleanup, (&nic->eapol_acked));
 
     MTLK_CLEANUP_STEP(core, NDP_ACKED, MTLK_OBJ_PTR(nic),
       mtlk_osal_event_cleanup, (&nic->ndp_acked));
@@ -10287,6 +10311,9 @@ _mtlk_core_init(struct nic* nic, mtlk_vap_handle_t vap_handle, mtlk_df_t*   df)
 
     MTLK_INIT_STEP(core, NDP_ACKED, MTLK_OBJ_PTR(nic),
       mtlk_osal_event_init, (&nic->ndp_acked));
+    
+    MTLK_INIT_STEP(core, EAPOL_ACKED, MTLK_OBJ_PTR(nic),
+      mtlk_osal_event_init, (&nic->eapol_acked));
 
     nic->is_stopped = TRUE;
     ILOG1_SDDDS("%s: Inited: is_stopped=%u, is_stopping=%u, is_iface_stopping=%u, net_state=%s",
