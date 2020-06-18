@@ -3208,6 +3208,15 @@ _mtlk_core_activate (mtlk_handle_t hcore, const void* data, uint32 data_size)
       goto FINISH;
     }
 
+    if (mtlk_vap_is_master_ap(nic->vap_handle) &&
+        !mtlk_vap_manager_did_ap_started(mtlk_vap_get_manager(nic->vap_handle))) {
+      /* if hostapd crashes during recovery, or is disabled by wpa_supplicant duo to disconnection
+       * from the far AP (because of recovery), it might not send us the sync_done vendor event,
+       * and we will forever remain in "sync not done" state, and cause bss_changed() to fail.
+       * if this is master vap and no other AP is active, assume that hostapd is comming up. */
+      wave_core_sync_hostapd_done_set(nic, TRUE);
+    }
+
     /* CoC configuration */
     if (1 >= mtlk_vap_manager_get_active_vaps_number(mtlk_vap_get_manager(nic->vap_handle))) {
       mtlk_coc_t *coc_mgmt = __wave_core_coc_mgmt_get(nic);

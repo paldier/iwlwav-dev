@@ -1663,18 +1663,22 @@ mtlk_stadb_disconnect_all (sta_db *stadb,
   sta = (sta_entry*)mtlk_stadb_iterate_first(stadb, &iter);
   if (sta) {
     do {
-      struct station_del_parameters station_del_parameters;
-      IEEE_ADDR sta_addr = *mtlk_sta_get_addr(sta);
-
       clb(usr_ctx, sta);
-
-      station_del_parameters.mac = sta_addr.au8Addr;
-      station_del_parameters.subtype = 12; /*Deauthentication*/
-      station_del_parameters.reason_code = WLAN_REASON_UNSPECIFIED;
-
       mtlk_stadb_remove_sta(stadb, sta);
-      mtlk_sta_decref(sta); /*sta must not be used after this step */
-      ieee80211_del_station(wdev->wiphy, mtlk_df_user_get_ndev(df_user), &station_del_parameters);
+
+      if (!mtlk_vap_is_sta(stadb->vap_handle)) {
+        struct station_del_parameters station_del_parameters;
+        IEEE_ADDR sta_addr = *mtlk_sta_get_addr(sta);
+        station_del_parameters.mac = sta_addr.au8Addr;
+        station_del_parameters.subtype = 12; /*Deauthentication*/
+        station_del_parameters.reason_code = WLAN_REASON_UNSPECIFIED;
+
+        mtlk_sta_decref(sta); /*sta must not be used after this step */
+        ieee80211_del_station(wdev->wiphy, mtlk_df_user_get_ndev(df_user), &station_del_parameters);
+      } else {
+        mtlk_sta_decref(sta); /* decref iteration */
+        ieee80211_connection_loss(wave_vap_get_vif(stadb->vap_handle));
+      }
 
       sta = (sta_entry*)mtlk_stadb_iterate_next(&iter);
     } while (sta);
