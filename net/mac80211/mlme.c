@@ -318,6 +318,25 @@ out:
 	return ret;
 }
 
+static void ieee80211_hw_notify_chandef_changed(struct ieee80211_local *local,
+						struct cfg80211_chan_def *chandef)
+{
+	struct ieee80211_sub_if_data *sdata;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(sdata, &local->interfaces, list) {
+		if (!sdata->dev)
+			continue;
+		if (sdata->vif.type != NL80211_IFTYPE_AP)
+			continue;
+
+		/* Each VIF bandwidth and beacon will be updated
+		 * on respective calls from hostapd afterwards */
+		cfg80211_ch_switch_notify(sdata->dev, chandef);
+	}
+	rcu_read_unlock();
+}
+
 static int ieee80211_config_bw(struct ieee80211_sub_if_data *sdata,
 			       struct sta_info *sta,
 			       const struct ieee80211_ht_cap *ht_cap,
@@ -431,6 +450,7 @@ static int ieee80211_config_bw(struct ieee80211_sub_if_data *sdata,
 		sta->sta.bandwidth = new_sta_bw;
 		rate_control_rate_update(local, sband, sta,
 					 IEEE80211_RC_BW_CHANGED);
+		ieee80211_hw_notify_chandef_changed(local, &chandef);
 	}
 
 	ret = ieee80211_vif_change_bandwidth(sdata, &chandef, changed);
@@ -445,6 +465,7 @@ static int ieee80211_config_bw(struct ieee80211_sub_if_data *sdata,
 		sta->sta.bandwidth = new_sta_bw;
 		rate_control_rate_update(local, sband, sta,
 					 IEEE80211_RC_BW_CHANGED);
+		ieee80211_hw_notify_chandef_changed(local, &chandef);
 	}
 
 	return 0;

@@ -3691,16 +3691,6 @@ static void _wv_ieee80211_op_bss_info_changed (struct ieee80211_hw *hw,
   ILOG1_SD("Setting BSS info for %s. changed = 0x%x",
            ieee80211_vif_to_name(vif), changed);
 
-  if (changed & BSS_CHANGED_BANDWIDTH) {
-    ILOG2_V("Change bandwidth");
-    hw->conf.chandef = info->chandef;
-
-    _wv_ieee80211_op_config(hw, IEEE80211_CONF_CHANGE_CHANNEL);
-    changed &= ~BSS_CHANGED_BANDWIDTH;
-
-    if (!changed) return;
-  }
-
   mac80211 = __wv_ieee80211_hw_get_mac80211(hw);
   WAVE_WV_CHECK_PTR_VOID(mac80211);
 

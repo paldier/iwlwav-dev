@@ -232,10 +232,13 @@ _mtlk_core_cfg_wmm_param_set_ap(mtlk_core_t *master_core)
 
       ILOG1_DD("VapID %u, is_ap %d", i, (int)mtlk_vap_is_ap(vap_handle));
 
+      if (mtlk_vap_is_master(vap_handle))
+        continue;
       if (!mtlk_vap_is_ap(vap_handle))
         continue;
 
       vap_core = mtlk_vap_get_core(vap_handle);
+      MTLK_ASSERT(NULL != vap_core);
 
       /* Don't send if ADD_VAP has not yet been sent */
       if (vap_core->is_stopped)
